@@ -21,7 +21,7 @@ jobs:
         
       - name: Build the web app
         working-directory: ${{github.workspace}}
-        run: . ./build.sh
+        run: ./build.sh
         
       - name: upload
         uses: actions/upload-pages-artifact@v1
