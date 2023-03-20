@@ -7,6 +7,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(index src/main.cpp)
 set(CMAKE_EXECUTABLE_SUFFIX ".html")
+target_link_options(index PUBLIC -sMIN_WEBGL_VERSION=2)
+target_link_options(index PUBLIC -sOFFSCREENCANVAS_SUPPORT)
+target_link_options(index PUBLIC --embed-file ${CMAKE_CURRENT_SOURCE_DIR}/src/shader@shader)
+target_compile_options(index PUBLIC -fwasm-exceptions)
+target_link_options(index PUBLIC -fwasm-exceptions)
+# target_compile_definitions(index PUBLIC "EXPLICIT_SWAP")
 
 set(CPACK_PROJECT_NAME ${PROJECT_NAME})
 set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})
