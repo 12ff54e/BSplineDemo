@@ -13,5 +13,5 @@ else
     gen=Ninja
 fi
 
-emcmake cmake --trace-expand -B build -G "$gen"
+emcmake cmake -B build -G "$gen"
 cmake --build build
