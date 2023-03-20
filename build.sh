@@ -6,5 +6,12 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-emcmake cmake -B build -G Ninja
+type -p ninja
+if [ $? -ne 0 ]; then
+    gen="Unix Makefiles" 
+else
+    gen=Ninja
+fi
+
+emcmake cmake -B build -G "$gen"
 cmake --build build
