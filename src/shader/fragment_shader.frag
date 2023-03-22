@@ -10,6 +10,8 @@ float ns(float x, vec2 pt0, float a) {
     return x - (pt0.x + 2. * a2x2 * x) / (1. - 2. * a * pt0.y + 3. * a2x2);
 }
 
+
+// Distance from a point to a parabola y = a * x ^ 2 
 float dist_pt2parabola(vec2 pt, float a) {
     float x0 = pt.y < 0. ? 0. : sqrt(pt.y / a);
     if(pt.x < 0.)
@@ -21,6 +23,7 @@ float dist_pt2parabola(vec2 pt, float a) {
     return distance(pt, vec2(x1, a * x1 * x1));
 }
 
+// Distance from a point to a line segment
 float dist_pt2line(vec2 pt, vec2 p1, vec2 p2) {
     vec2 p1t = pt - p1;
     vec2 p2t = pt - p2;
@@ -32,6 +35,27 @@ float dist_pt2line(vec2 pt, vec2 p1, vec2 p2) {
     } else {
         return min(length(p1t), length(p2t));
     }
+}
+
+float dist_pt2quadratic(vec2 pt, mat3x2 coef_mat, float t0, float t1) {
+    const float eps = .00001;
+    vec2 p1 = coef_mat * vec3(1., t0, t0 * t0);
+    vec2 p2 = coef_mat * vec3(1., t1, t1 * t1);
+    if(abs(cross(vec3(coef_mat[1], 0.), vec3(coef_mat[2], 0.)).z) < eps) {
+        // treat as straight line
+        return dist_pt2line(pt, p1, p2);
+    }
+    // construct rotation-translation matrix
+    vec3 a = vec3(normalize(coef_mat[2]), 0.);
+    float a_inv = inversesqrt(length(coef_mat[2]));
+    float b_plus = .5 * dot(coef_mat[1], a.xy) * a_inv;
+    float b_minus = cross(vec3(coef_mat[1], 0.), a).z * a_inv;
+    float c_plus = dot(coef_mat[0], a.xy);
+    float c_minus = cross(vec3(coef_mat[0], 0.), a).z;
+    mat3 geo_tran = mat3(a, cross(a, vec3(0., 0., -1.)), vec3(b_plus * b_minus - c_minus, b_plus * b_plus - c_plus, 1.));
+    vec3 tp = geo_tran * vec3(pt, 1.);
+
+    return min(min(distance(pt, p1), distance(pt, p2)), dist_pt2parabola(tp.xy, 1. / (b_minus * b_minus)));
 }
 
 void main() {
@@ -49,16 +73,16 @@ void main() {
     vec3 frontground_color2 = vec3(0.880722, 0.611041, 0.142051);
     frag_color = vec4(background_color, 1.0);
 
-    float WIDTH = 0.005;
-    float SMOOTH = 0.0025;
-    float dist = dist_pt2parabola(uv - vec2(0., .1), 3.);
+    const float WIDTH = 0.005;
+    const float SMOOTH = 0.0025;
+    float dist = dist_pt2quadratic(uv, mat3x2(.2, 1.3, -2.7, -3.2, 3.5, 2.), 0., 1.);
     if(dist < WIDTH + SMOOTH) {
         dist = smoothstep(WIDTH, WIDTH + SMOOTH, dist);
-        frag_color = vec4(mix(frontground_color, background_color, dist), 1.);
+        frag_color = vec4(mix(frontground_color, frag_color.xyz, dist), 1.);
     }
-    dist = dist_pt2line(uv, vec2(-.45 * aspect_ratio, .1), vec2(.45 * aspect_ratio, .9));
+    dist = dist_pt2quadratic(uv, mat3x2(0.4, 0.2, -1.2, 0.84, 0.2, -0.14), 0., 1.);
     if(dist < WIDTH + SMOOTH) {
         dist = smoothstep(WIDTH, WIDTH + SMOOTH, dist);
-        frag_color = vec4(mix(frontground_color2, background_color, dist), 1.);
+        frag_color = vec4(mix(frontground_color2, frag_color.xyz, dist), 1.);
     }
 }

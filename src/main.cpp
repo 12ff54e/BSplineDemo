@@ -77,7 +77,7 @@ int main() {
         // x, y, r, g, b for point at upper-left, upper-right,
         // lower-right, lower-left.
         GLfloat positions_color[] = {
-            -1.f, 1.f,  .9f, .7f, .4f, 1.f, 1.f,  1.f, .2f, .2f,
+            -1.f, 1.f,  .9f, .7f, .4f, 1.f, 1.f,  .8f, .7f, 1.f,
             -1.f, -1.f, .5f, 1.f, .2f, 1.f, -1.f, .9f, .7f, .4f,
         };
         constexpr unsigned pos_size = 2;
