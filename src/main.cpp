@@ -7,13 +7,15 @@
 
 #define canvas "#canvas"
 
-#define exec_and_check(func, ...)                         \
-    if (func(__VA_ARGS__) != EMSCRIPTEN_RESULT_SUCCESS) { \
-        std::cout << "Failed to invoke" #func << '\n';    \
-        return 1;                                         \
-    }
+#define exec_and_check(func, ...)                             \
+    do {                                                      \
+        if (func(__VA_ARGS__) != EMSCRIPTEN_RESULT_SUCCESS) { \
+            std::cout << "Failed to invoke" #func << '\n';    \
+            return 1;                                         \
+        }                                                     \
+    } while (false)
 
-int main(int argc, char const* argv[]) {
+int main() {
     EmscriptenWebGLContextAttributes webgl_context_attr;
     emscripten_webgl_init_context_attributes(&webgl_context_attr);
     webgl_context_attr.majorVersion = 2;
@@ -59,7 +61,8 @@ int main(int argc, char const* argv[]) {
 
     // pass canvas dimension to shader as uniform
     auto canvas_size_uniform_loc = glGetUniformLocation(program, "canvas_size");
-    glUniform2f(canvas_size_uniform_loc, canvas_width, canvas_height);
+    glUniform2f(canvas_size_uniform_loc, static_cast<GLfloat>(canvas_width),
+                static_cast<GLfloat>(canvas_height));
 
     // set background color to grey
     glClearColor(0.3f, 0.3f, 0.3f, 1.f);
@@ -74,24 +77,25 @@ int main(int argc, char const* argv[]) {
         // x, y, r, g, b for point at upper-left, upper-right,
         // lower-right, lower-left.
         GLfloat positions_color[] = {
-            -1.0, 1.0,  .9, .7, .4, 1.0, 1.0,  1., .2, .2,
-            -1.0, -1.0, .5, 1., .2, 1.0, -1.0, .9, .7, .4,
+            -1.f, 1.f,  .9f, .7f, .4f, 1.f, 1.f,  1.f, .2f, .2f,
+            -1.f, -1.f, .5f, 1.f, .2f, 1.f, -1.f, .9f, .7f, .4f,
         };
+        constexpr unsigned pos_size = 2;
+        constexpr unsigned color_size = 3;
+        constexpr unsigned int vertex_size = pos_size + color_size;
         GLuint vbo;
         glGenBuffers(1, &vbo);
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glBufferData(GL_ARRAY_BUFFER, sizeof(positions_color), positions_color,
                      GL_STATIC_DRAW);
 
-        GLint position_loc = glGetAttribLocation(program, "a_position");
-        GLint color_loc = glGetAttribLocation(program, "a_color");
-        glEnableVertexAttribArray(position_loc);
-        glEnableVertexAttribArray(color_loc);
-        glVertexAttribPointer(position_loc, 2, GL_FLOAT, GL_FALSE,
-                              sizeof(GLfloat) * 5, 0);
-        glVertexAttribPointer(color_loc, 3, GL_FLOAT, GL_FALSE,
-                              sizeof(GLfloat) * 5,
-                              (void*)(sizeof(GLfloat) * 2));
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(0, pos_size, GL_FLOAT, GL_FALSE,
+                              sizeof(GLfloat) * vertex_size, nullptr);
+        glVertexAttribPointer(
+            1, color_size, GL_FLOAT, GL_FALSE, sizeof(GLfloat) * vertex_size,
+            reinterpret_cast<void*>(sizeof(GLfloat) * pos_size));
 
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     }

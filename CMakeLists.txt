@@ -14,6 +14,8 @@ target_compile_options(index PUBLIC -fwasm-exceptions)
 target_link_options(index PUBLIC -fwasm-exceptions)
 # target_compile_definitions(index PUBLIC "EXPLICIT_SWAP")
 
+target_compile_options(index PUBLIC -Weverything -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-pre-c++14-compat)
+
 set(CPACK_PROJECT_NAME ${PROJECT_NAME})
 set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})
 include(CPack)

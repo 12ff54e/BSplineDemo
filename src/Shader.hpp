@@ -1,5 +1,5 @@
-#ifndef _BSPLINE_DEMO_SHADER
-#define _BSPLINE_DEMO_SHADER
+#ifndef BSPLINE_DEMO_SHADER_
+#define BSPLINE_DEMO_SHADER_
 
 #include <GLES3/gl3.h>
 #include <iostream>
@@ -93,4 +93,4 @@ void ShaderProgram::use() {
     glUseProgram(id);
 }
 
-#endif
+#endif  // BSPLINE_DEMO_SHADER_
