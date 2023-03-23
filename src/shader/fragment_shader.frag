@@ -10,17 +10,16 @@ float ns(float x, vec2 pt0, float a) {
     return x - (pt0.x + 2. * a2x2 * x) / (1. - 2. * a * pt0.y + 3. * a2x2);
 }
 
-
 // Distance from a point to a parabola y = a * x ^ 2 
-float dist_pt2parabola(vec2 pt, float a) {
+float dist_pt2parabola(vec2 pt, float a, out float xp) {
     float x0 = pt.y < 0. ? 0. : sqrt(pt.y / a);
     if(pt.x < 0.)
         x0 = -x0;
 
-    // two iterates should be sufficent
-    float x1 = x0 - ns(x0, pt, a);
-    x1 = x1 - ns(x1, pt, a);
-    return distance(pt, vec2(x1, a * x1 * x1));
+    // two iterates should be sufficient
+    xp = x0 - ns(x0, pt, a);
+    xp = xp - ns(xp, pt, a);
+    return distance(pt, vec2(xp, a * xp * xp));
 }
 
 // Distance from a point to a line segment
@@ -45,17 +44,24 @@ float dist_pt2quadratic(vec2 pt, mat3x2 coef_mat, float t0, float t1) {
         // treat as straight line
         return dist_pt2line(pt, p1, p2);
     }
-    // construct rotation-translation matrix
-    vec3 a = vec3(normalize(coef_mat[2]), 0.);
+    
+    vec2 a = normalize(coef_mat[2]);
+    mat2 rot = mat2(a.y, a.x, -a.x, a.y);
     float a_inv = inversesqrt(length(coef_mat[2]));
-    float b_plus = .5 * dot(coef_mat[1], a.xy) * a_inv;
-    float b_minus = cross(vec3(coef_mat[1], 0.), a).z * a_inv;
-    float c_plus = dot(coef_mat[0], a.xy);
-    float c_minus = cross(vec3(coef_mat[0], 0.), a).z;
-    mat3 geo_tran = mat3(a, cross(a, vec3(0., 0., -1.)), vec3(b_plus * b_minus - c_minus, b_plus * b_plus - c_plus, 1.));
+    vec2 bt = rot * coef_mat[1] * a_inv;
+    vec2 ct = rot * coef_mat[0];
+    mat3 geo_tran = mat3(rot);
+    geo_tran[2] = vec3(.5 * bt.x * bt.y - ct.x, .25 * bt.y * bt.y - ct.y, 1.);
     vec3 tp = geo_tran * vec3(pt, 1.);
 
-    return min(min(distance(pt, p1), distance(pt, p2)), dist_pt2parabola(tp.xy, 1. / (b_minus * b_minus)));
+    float xp;
+    float dist = dist_pt2parabola(tp.xy, 1. / (bt.x * bt.x), xp);
+    if(((geo_tran * vec3(p1, 1.)).x - xp) * ((geo_tran * vec3(p2, 1.)).x - xp) > 0.) {
+        // projection point outside segment range
+        dist = min(distance(pt, p1), distance(pt, p2));
+    }
+
+    return dist;
 }
 
 void main() {
@@ -64,25 +70,25 @@ void main() {
     uv.x *= aspect_ratio;
     // uv is normalized coordinate with y from 0 to 1 and x from -a/2 to a/2, 
     // starting from lower-left corner, where a is aspect ratio.
-    // (Note: it depens on the qualifier `origin_upper_left` and `pixel_center_integer`)
+    // (Note: it depends on the qualifier `origin_upper_left` and `pixel_center_integer` of gl_FragCoord)
 
     // background being white
     vec3 background_color = color;
-    // frontground being light blue (default color of mma's plot)
-    vec3 frontground_color = vec3(0.368417, 0.506779, 0.709798);
-    vec3 frontground_color2 = vec3(0.880722, 0.611041, 0.142051);
+    // foreground being light blue (default color of mma's plot)
+    vec3 foreground_color = vec3(0.368417, 0.506779, 0.709798);
+    vec3 foreground_color2 = vec3(0.880722, 0.611041, 0.142051);
     frag_color = vec4(background_color, 1.0);
 
     const float WIDTH = 0.005;
     const float SMOOTH = 0.0025;
-    float dist = dist_pt2quadratic(uv, mat3x2(.2, 1.3, -2.7, -3.2, 3.5, 2.), 0., 1.);
+    float dist = dist_pt2quadratic(uv, mat3x2(.2, 1.3, -2.7, -3.2, 3.5, 2.), 0., .9);
     if(dist < WIDTH + SMOOTH) {
         dist = smoothstep(WIDTH, WIDTH + SMOOTH, dist);
-        frag_color = vec4(mix(frontground_color, frag_color.xyz, dist), 1.);
+        frag_color = vec4(mix(foreground_color, frag_color.xyz, dist), 1.);
     }
     dist = dist_pt2quadratic(uv, mat3x2(0.4, 0.2, -1.2, 0.84, 0.2, -0.14), 0., 1.);
     if(dist < WIDTH + SMOOTH) {
         dist = smoothstep(WIDTH, WIDTH + SMOOTH, dist);
-        frag_color = vec4(mix(frontground_color2, frag_color.xyz, dist), 1.);
+        frag_color = vec4(mix(foreground_color2, frag_color.xyz, dist), 1.);
     }
 }
