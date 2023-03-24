@@ -15,6 +15,43 @@
         }                                                     \
     } while (false)
 
+static void draw() {  // set background color to grey
+    glClearColor(0.3f, 0.3f, 0.3f, 1.f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    // add blending
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // Draw the full-screen quad
+    {
+        // x, y, r, g, b for point at upper-left, upper-right,
+        // lower-right, lower-left.
+        GLfloat positions_color[] = {
+            -1.f, 1.f,  .9f, .7f, .4f, 1.f, 1.f,  .8f, .7f, 1.f,
+            -1.f, -1.f, .5f, 1.f, .2f, 1.f, -1.f, .9f, .7f, .4f,
+        };
+        constexpr unsigned pos_size = 2;
+        constexpr unsigned color_size = 3;
+        constexpr unsigned int vertex_size = pos_size + color_size;
+        GLuint vbo;
+        glGenBuffers(1, &vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(positions_color), positions_color,
+                     GL_STATIC_DRAW);
+
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(0, pos_size, GL_FLOAT, GL_FALSE,
+                              sizeof(GLfloat) * vertex_size, nullptr);
+        glVertexAttribPointer(
+            1, color_size, GL_FLOAT, GL_FALSE, sizeof(GLfloat) * vertex_size,
+            reinterpret_cast<void*>(sizeof(GLfloat) * pos_size));
+
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+}
+
 int main() {
     EmscriptenWebGLContextAttributes webgl_context_attr;
     emscripten_webgl_init_context_attributes(&webgl_context_attr);
@@ -64,41 +101,39 @@ int main() {
     glUniform2f(canvas_size_uniform_loc, static_cast<GLfloat>(canvas_width),
                 static_cast<GLfloat>(canvas_height));
 
-    // set background color to grey
-    glClearColor(0.3f, 0.3f, 0.3f, 1.f);
-    glClear(GL_COLOR_BUFFER_BIT);
+    GLint max_uniform_block_size{};
+    glGetIntegerv(GL_MAX_UNIFORM_BLOCK_SIZE, &max_uniform_block_size);
+    std::cout << "Maximum uniform block size: " << max_uniform_block_size
+              << "bytes.\n";
 
-    // add blending
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    // interpolation
 
-    // Draw the full-screen quad
-    {
-        // x, y, r, g, b for point at upper-left, upper-right,
-        // lower-right, lower-left.
-        GLfloat positions_color[] = {
-            -1.f, 1.f,  .9f, .7f, .4f, 1.f, 1.f,  .8f, .7f, 1.f,
-            -1.f, -1.f, .5f, 1.f, .2f, 1.f, -1.f, .9f, .7f, .4f,
-        };
-        constexpr unsigned pos_size = 2;
-        constexpr unsigned color_size = 3;
-        constexpr unsigned int vertex_size = pos_size + color_size;
-        GLuint vbo;
-        glGenBuffers(1, &vbo);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(positions_color), positions_color,
-                     GL_STATIC_DRAW);
+    // fill values into ubo, use std140 layout;
+    float myArray[] = {
+        -0.6f,      0.1f,      0.f, 0.f, -0.292096f, -0.0102941f, 0.f, 0.f,
+        0.556556f,  0.732353f, 0.f, 0.f, -0.016973f, 1.06765f,    0.f, 0.f,
+        -0.564154f, 0.310294f, 0.f, 0.f, 0.5f,       0.2f,        0.f, 0.f,
+    };
+    constexpr unsigned MAX_ARRAY_SIZE = 1024;
+    GLuint ubo;
+    glGenBuffers(1, &ubo);
+    glBindBuffer(GL_UNIFORM_BUFFER, ubo);
+    glBufferData(GL_UNIFORM_BUFFER, MAX_ARRAY_SIZE * sizeof(float) * 4, nullptr,
+                 GL_STATIC_DRAW);
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(myArray), myArray);
 
-        glEnableVertexAttribArray(0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(0, pos_size, GL_FLOAT, GL_FALSE,
-                              sizeof(GLfloat) * vertex_size, nullptr);
-        glVertexAttribPointer(
-            1, color_size, GL_FLOAT, GL_FALSE, sizeof(GLfloat) * vertex_size,
-            reinterpret_cast<void*>(sizeof(GLfloat) * pos_size));
+    const GLint control_point_size = 6;
+    glUniform1i(glGetUniformLocation(program, "control_point_size"),
+                control_point_size);
 
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    }
+    // bind ubo to shader program
+    GLuint blockIndex = glGetUniformBlockIndex(program, "spline_data");
+    GLuint bindingPoint = 0;
+    glUniformBlockBinding(program, blockIndex, bindingPoint);
+    glBindBufferBase(GL_UNIFORM_BUFFER, bindingPoint, ubo);
+
+    draw();
+
 #ifdef EXPLICIT_SWAP
     // commit frame after draw
     emscripten_webgl_commit_frame();
