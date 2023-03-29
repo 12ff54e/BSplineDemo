@@ -1,0 +1,4 @@
+[submodule "BSplineInterpolation"]
+	path = BSplineInterpolation
+	url = git@github.com:12ff54e/BSplineInterpolation.git
+	branch = dev
