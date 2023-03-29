@@ -18,6 +18,8 @@ jobs:
 
       - name: Setup Emscripten toolchain
         uses: mymindstorm/setup-emsdk@v12
+        with:
+          submodules: true
         
       - name: Build the web app
         working-directory: ${{github.workspace}}
