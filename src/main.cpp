@@ -10,13 +10,20 @@
 #include "Vec.hpp"
 
 #define canvas "#canvas"
-using pt_type = Vec<2, float>;
+using coord_type = float;
+using pt_type = Vec<2, coord_type>;
 
 constexpr int canvas_width = 800;
 constexpr int canvas_height = 600;
 
 // uniform buffer id
 static GLuint ubo;
+
+struct main_loop_args {
+    ShaderProgram& program_ref;
+    std::vector<pt_type>& data_ref;
+    pt_type& current_pt_ref;
+};
 
 #define exec_and_check(func, ...)                             \
     do {                                                      \
@@ -26,13 +33,17 @@ static GLuint ubo;
         }                                                     \
     } while (false)
 
-static void draw(ShaderProgram& program, std::vector<pt_type>& data) {
+// static void draw(ShaderProgram& program, std::vector<pt_type>& data) {
+static void draw(void* args_ptr) {
+    // unpack args
+    auto args = *static_cast<main_loop_args*>(args_ptr);
+    auto& program = args.program_ref;
+    auto& data = args.data_ref;
+    auto& current_pt = args.current_pt_ref;
+
     // set background color to grey
     glClearColor(0.3f, 0.3f, 0.3f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT);
-
-    glUniform1ui(glGetUniformLocation(program, "control_point_size"),
-                 data.size());
 
     constexpr float ar =
         static_cast<float>(canvas_width) / static_cast<float>(canvas_height);
@@ -43,22 +54,13 @@ static void draw(ShaderProgram& program, std::vector<pt_type>& data) {
         return 1.f - y / static_cast<float>(canvas_height);
     };
 
+    // update uniform buffer
+    bool add_current = (data.back() - current_pt).mag() > 2.f;
+    if (add_current) { data.push_back(current_pt); }
+
     std::size_t padded_data_size = data.size() * 4;
     std::unique_ptr<float[]> ptr(new float[padded_data_size]);
     if (data.size() >= 2) {
-        // interpolation
-        // intp::InterpolationFunctionTemplate1D<float> intp_temp(data.size(),
-        // 2); std::vector<float> x_coord, y_coord;
-        // x_coord.reserve(data.size());
-        // y_coord.reserve(data.size());
-        // for (auto& vec : data) {
-        //     x_coord.push_back(vec.x());
-        //     y_coord.push_back(vec.y());
-        // }
-        // auto x_spline =
-        // intp_temp.interpolate(intp::util::get_range(x_coord)); auto y_spline
-        // = intp_temp.interpolate(intp::util::get_range(y_coord));
-
         intp::InterpolationFunction1D<Vec<2, float>, float> vec_spline(
             intp::util::get_range(data), 2);
 
@@ -74,39 +76,19 @@ static void draw(ShaderProgram& program, std::vector<pt_type>& data) {
             ptr[4 * i + 1] = clip_y(data[i].y());
         }
     }
+    // update control point number
+    glUniform1ui(glGetUniformLocation(program, "control_point_size"),
+                 data.size());
     // update control points
     glBindBuffer(GL_UNIFORM_BUFFER, ubo);
     glBufferSubData(GL_UNIFORM_BUFFER, 0,
                     static_cast<GLsizeiptr>(sizeof(float) * padded_data_size),
                     ptr.get());
 
+    if (add_current) { data.pop_back(); }
+
     // Draw the full-screen quad, to let OpenGL invoke fragment shader
-    {
-        // x, y, r, g, b for point at upper-left, upper-right,
-        // lower-right, lower-left.
-        GLfloat positions_color[] = {
-            -1.f, 1.f,  .9f, .7f, .4f, 1.f, 1.f,  .8f, .7f, 1.f,
-            -1.f, -1.f, .5f, 1.f, .2f, 1.f, -1.f, .9f, .7f, .4f,
-        };
-        constexpr unsigned pos_size = 2;
-        constexpr unsigned color_size = 3;
-        constexpr unsigned int vertex_size = pos_size + color_size;
-        GLuint vbo;
-        glGenBuffers(1, &vbo);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(positions_color), positions_color,
-                     GL_STATIC_DRAW);
-
-        glEnableVertexAttribArray(0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(0, pos_size, GL_FLOAT, GL_FALSE,
-                              sizeof(GLfloat) * vertex_size, nullptr);
-        glVertexAttribPointer(
-            1, color_size, GL_FLOAT, GL_FALSE, sizeof(GLfloat) * vertex_size,
-            reinterpret_cast<void*>(sizeof(GLfloat) * pos_size));
-
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    }
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
 int main() {
@@ -184,34 +166,77 @@ int main() {
 
     static std::vector<pt_type> data;
     data.reserve(MAX_ARRAY_SIZE);
+    static pt_type current_pt;
 
-    draw(program, data);
+    static main_loop_args args{program, data, current_pt};
 
-    auto add_point = [](int, const EmscriptenMouseEvent* mouse_event,
-                        void* user_data) {
+    auto handle_mouse_click = [](int, const EmscriptenMouseEvent* mouse_event,
+                                 void* user_data) {
         auto& vec = *static_cast<std::vector<pt_type>*>(user_data);
-        if (vec.size() < MAX_ARRAY_SIZE) {
-            vec.emplace_back(mouse_event->targetX, mouse_event->targetY);
-        } else {
-            std::cout << "Point number reach maximum(" << MAX_ARRAY_SIZE
-                      << ").\n";
+        switch (mouse_event->button) {
+            case 0:
+                if (vec.size() < MAX_ARRAY_SIZE) {
+                    vec.emplace_back(mouse_event->targetX,
+                                     mouse_event->targetY);
+                } else {
+                    std::cout << "Point number reach maximum(" << MAX_ARRAY_SIZE
+                              << ").\n";
+                }
+                break;
+            case 2:
+                if (!vec.empty()) { vec.pop_back(); }
+                break;
         }
-        draw(program, vec);
         return EM_TRUE;
     };
-    auto remove_point = [](int, const EmscriptenKeyboardEvent* key_event,
-                           void* user_data) {
+    auto handle_key = [](int, const EmscriptenKeyboardEvent* key_event,
+                         void* user_data) {
         auto& vec = *static_cast<std::vector<pt_type>*>(user_data);
         if (!vec.empty() && key_event->code == std::string{"Backspace"}) {
             vec.pop_back();
         }
-        draw(program, vec);
+        return EM_TRUE;
+    };
+    auto handle_mouse_move = [](int, const EmscriptenMouseEvent* mouse_event,
+                                void* user_data) {
+        *static_cast<pt_type*>(user_data) =
+            pt_type{mouse_event->targetX, mouse_event->targetY};
         return EM_TRUE;
     };
     emscripten_set_click_callback(canvas, static_cast<void*>(&data), false,
-                                  add_point);
+                                  handle_mouse_click);
     emscripten_set_keyup_callback(canvas, static_cast<void*>(&data), false,
-                                  remove_point);
+                                  handle_key);
+    emscripten_set_mousemove_callback(canvas, static_cast<void*>(&current_pt),
+                                      false, handle_mouse_move);
+
+    emscripten_set_main_loop_arg(draw, static_cast<void*>(&args), 0, EM_FALSE);
+
+    // Prepare data for the full-screen quad
+    {
+        // x, y, r, g, b for point at upper-left, upper-right,
+        // lower-right, lower-left.
+        GLfloat positions_color[] = {
+            -1.f, 1.f,  .9f, .7f, .4f, 1.f, 1.f,  .8f, .7f, 1.f,
+            -1.f, -1.f, .5f, 1.f, .2f, 1.f, -1.f, .9f, .7f, .4f,
+        };
+        constexpr unsigned pos_size = 2;
+        constexpr unsigned color_size = 3;
+        constexpr unsigned int vertex_size = pos_size + color_size;
+        GLuint vbo;
+        glGenBuffers(1, &vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(positions_color), positions_color,
+                     GL_STATIC_DRAW);
+
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(0, pos_size, GL_FLOAT, GL_FALSE,
+                              sizeof(GLfloat) * vertex_size, nullptr);
+        glVertexAttribPointer(
+            1, color_size, GL_FLOAT, GL_FALSE, sizeof(GLfloat) * vertex_size,
+            reinterpret_cast<void*>(sizeof(GLfloat) * pos_size));
+    }
 
 #ifdef EXPLICIT_SWAP
     // commit frame after draw
