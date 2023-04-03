@@ -238,6 +238,12 @@ int main() {
             reinterpret_cast<void*>(sizeof(GLfloat) * pos_size));
     }
 
+    std::cout << "\nLeft click to add new points;\n";
+    std::cout << "Right click / Backspace to remove a point;\n";
+    std::cout
+        << "Green, orange and red points are data (clicked) points, knots "
+           "points (define segments) and control points respectively.\n";
+
 #ifdef EXPLICIT_SWAP
     // commit frame after draw
     emscripten_webgl_commit_frame();
