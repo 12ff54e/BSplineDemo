@@ -1,24 +1,27 @@
-#include <emscripten/html5.h>
-#include <webgl/webgl2.h>
-#include <fstream>
-#include <iostream>
-#include <memory>
-#include <string>
-#include <vector>
-#include "Interpolation.hpp"
-#include "Shader.hpp"
-#include "Vec.hpp"
+#include <emscripten/html5.h>  // for H5 event handling
+#include <webgl/webgl2.h>      // for all the gl* staff
+#include <fstream>             // for reading shader source
+#include <iostream>            // for output in console
+#include <memory>              // for std::unique_ptr
+#include <string>              // for string compare in key code
+#include "Interpolation.hpp"   // for interpoaltion
+#include "Shader.hpp"          // for shader management
+#include "Vec.hpp"             // general purpose linear algebra type
 
-#define canvas "#canvas"
-using coord_type = float;
-using pt_type = Vec<2, coord_type>;
+#define canvas "#canvas"             // canvas query selector
+using coord_type = float;            // canvas coordinate type
+using pt_type = Vec<2, coord_type>;  // canvas position type
 
 constexpr int canvas_width = 800;
 constexpr int canvas_height = 600;
 
+// vertex array buffer
+static GLuint vao;
 // uniform buffer id
 static GLuint ubo;
 
+// Parameters send to main loop callback function are encapsulated in this
+// struct, they are all reference to static objects.
 struct main_loop_args {
     ShaderProgram& program_ref;
     std::vector<pt_type>& data_ref;
@@ -33,7 +36,7 @@ struct main_loop_args {
         }                                                     \
     } while (false)
 
-// static void draw(ShaderProgram& program, std::vector<pt_type>& data) {
+// main loop
 static void draw(void* args_ptr) {
     // unpack args
     auto args = *static_cast<main_loop_args*>(args_ptr);
@@ -47,17 +50,20 @@ static void draw(void* args_ptr) {
 
     constexpr float ar =
         static_cast<float>(canvas_width) / static_cast<float>(canvas_height);
-    auto clip_x = [](float x) {
-        return x / static_cast<float>(canvas_height) - .5f * ar;
+    auto clip_x = [](coord_type x) -> float {
+        return static_cast<float>(x) / static_cast<float>(canvas_height) -
+               .5f * ar;
     };
-    auto clip_y = [](float y) {
-        return 1.f - y / static_cast<float>(canvas_height);
+    auto clip_y = [](coord_type y) -> float {
+        return 1.f - static_cast<float>(y) / static_cast<float>(canvas_height);
     };
 
     // update uniform buffer
-    bool add_current = (data.back() - current_pt).mag() > 2.f;
+    bool add_current = (data.back() - current_pt).mag() > coord_type{2};
     if (add_current) { data.push_back(current_pt); }
+    // TODO: Draw a separate spline containing current point
 
+    // pad every point to a vec4
     std::size_t padded_data_size = data.size() * 4;
     std::unique_ptr<float[]> ptr(new float[padded_data_size]);
     if (data.size() >= 2) {
@@ -89,6 +95,7 @@ static void draw(void* args_ptr) {
     if (add_current) { data.pop_back(); }
 
     // Draw the full-screen quad, to let OpenGL invoke fragment shader
+    glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
@@ -141,6 +148,7 @@ int main() {
 
     // line width
     glUniform1f(glGetUniformLocation(program, "width"), 0.008f);
+    // dashing length
     glUniform1f(glGetUniformLocation(program, "dashing"), 0.06f);
 
     // interpolation
@@ -224,7 +232,11 @@ int main() {
         };
         constexpr unsigned pos_size = 2;
         constexpr unsigned color_size = 3;
-        constexpr unsigned int vertex_size = pos_size + color_size;
+        constexpr unsigned vertex_size = pos_size + color_size;
+
+        glGenVertexArrays(1, &vao);
+        glBindVertexArray(vao);
+
         GLuint vbo;
         glGenBuffers(1, &vbo);
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
