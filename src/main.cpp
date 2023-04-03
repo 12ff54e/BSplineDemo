@@ -84,6 +84,7 @@ static void draw(void* args_ptr) {
     glBufferSubData(GL_UNIFORM_BUFFER, 0,
                     static_cast<GLsizeiptr>(sizeof(float) * padded_data_size),
                     ptr.get());
+    // TODO: No need to update the whole buffer.
 
     if (add_current) { data.pop_back(); }
 
@@ -140,6 +141,7 @@ int main() {
 
     // line width
     glUniform1f(glGetUniformLocation(program, "width"), 0.008f);
+    glUniform1f(glGetUniformLocation(program, "dashing"), 0.06f);
 
     // interpolation
 
