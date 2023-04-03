@@ -203,8 +203,8 @@ int main() {
             pt_type{mouse_event->targetX, mouse_event->targetY};
         return EM_TRUE;
     };
-    emscripten_set_click_callback(canvas, static_cast<void*>(&data), false,
-                                  handle_mouse_click);
+    emscripten_set_mousedown_callback(canvas, static_cast<void*>(&data), false,
+                                      handle_mouse_click);
     emscripten_set_keyup_callback(canvas, static_cast<void*>(&data), false,
                                   handle_key);
     emscripten_set_mousemove_callback(canvas, static_cast<void*>(&current_pt),

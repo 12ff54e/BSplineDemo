@@ -18,7 +18,8 @@ float ns(float x, vec2 pt0, float a) {
     return x - (pt0.x + 2. * a2x2 * x) / (1. - 2. * a * pt0.y + 3. * a2x2);
 }
 
-// Distance from a point to a parabola y = a * x ^ 2 
+// Distance from a point to a parabola y = a * x ^ 2, xp is the closest point on parabola
+// also referred as projection point in the following.
 float dist_pt2parabola(vec2 pt, float a, out float xp) {
     float x0 = pt.y < 0. ? 0. : sqrt(pt.y / a);
     if(pt.x < 0.)
@@ -44,13 +45,25 @@ float dist_pt2line(vec2 pt, vec2 p1, vec2 p2) {
     }
 }
 
-float dist_pt2quadratic(vec2 pt, mat3x2 coef_mat, float t0, float t1) {
+// arc length of a parabola y = a * x ^ 2, from x1 to x2
+float parabola_arc_length(float a, float x1, float x2) {
+    float t1 = 2. * a * x1;
+    float t2 = 2. * a * x2;
+    return .5 * (x2 * sqrt(1. + t2 * t2) - x1 * sqrt(1. + t1 * t1)) + (asinh(t2) - asinh(t1)) / (4. * a);
+}
+
+// Distance from a point to a quadratic parameter curve segment, described by
+// | x |              | 1   |
+// |   | = coef_mat * | t   |
+// | y |              | t^2 |,
+// from t0 to t1. The arc length from point at t = t_arc to projection point is output in arc_len.
+float dist_pt2quadratic(vec2 pt, mat3x2 coef_mat, float t0, float t1, float t_arc, out float arc_length) {
     const float eps = .00001;
-    vec2 p1 = coef_mat * vec3(1., t0, t0 * t0);
-    vec2 p2 = coef_mat * vec3(1., t1, t1 * t1);
+    vec2 p0 = coef_mat * vec3(1., t0, t0 * t0);
+    vec2 p1 = coef_mat * vec3(1., t1, t1 * t1);
     if(abs(cross(vec3(coef_mat[1], 0.), vec3(coef_mat[2], 0.)).z) < eps) {
         // treat as straight line
-        return dist_pt2line(pt, p1, p2);
+        return dist_pt2line(pt, p0, p1);
     }
 
     vec2 a = normalize(coef_mat[2]);
@@ -62,14 +75,38 @@ float dist_pt2quadratic(vec2 pt, mat3x2 coef_mat, float t0, float t1) {
     geo_tran[2] = vec3(.5 * bt.x * bt.y - ct.x, .25 * bt.y * bt.y - ct.y, 1.);
     vec3 tp = geo_tran * vec3(pt, 1.);
 
-    float xp;
-    float dist = dist_pt2parabola(tp.xy, 1. / (bt.x * bt.x), xp);
-    if(((geo_tran * vec3(p1, 1.)).x - xp) * ((geo_tran * vec3(p2, 1.)).x - xp) > 0.) {
+    float xp; // projection point
+    float a_p = 1. / (bt.x * bt.x);
+    float dist = dist_pt2parabola(tp.xy, a_p, xp);
+    float x0_tran = (geo_tran * vec3(p0, 1.)).x;
+    float x1_tran = (geo_tran * vec3(p1, 1.)).x;
+    if((x0_tran - xp) * (x1_tran - xp) > 0.) {
         // projection point outside segment range
-        dist = min(distance(pt, p1), distance(pt, p2));
+        dist = min(distance(pt, p0), distance(pt, p1));
     }
+    arc_length = parabola_arc_length(a_p, (geo_tran * vec3(coef_mat * vec3(1., t_arc, t_arc * t_arc), 1.)).x, xp) * sign(x1_tran - x0_tran);
 
     return dist;
+}
+
+// Distance from a point to a quadratic parameter curve segment, described by
+// | x |              | 1   |
+// |   | = coef_mat * | t   |
+// | y |              | t^2 |,
+// from t0 to t1. The arc length from starting point to projection point is output in arc_len.
+// If projection point is not lying on the segment, arg length will be -1.
+float dist_pt2quadratic(vec2 pt, mat3x2 coef_mat, float t0, float t1, out float arc_length) {
+    return dist_pt2quadratic(pt, coef_mat, t0, t1, t0, arc_length);
+}
+
+// Distance from a point to a quadratic parameter curve segment, described by
+// | x |              | 1   |
+// |   | = coef_mat * | t   |
+// | y |              | t^2 |,
+// from t0 to t1
+float dist_pt2quadratic(vec2 pt, mat3x2 coef_mat, float t0, float t1) {
+    float d;
+    return dist_pt2quadratic(pt, coef_mat, t0, t1, d);
 }
 
 // calculate uniform bspline value using De Boor'a algorithm, t \in [span[1],span[2]]
@@ -106,7 +143,20 @@ float dist_pt2bspline2(vec2 pt) {
         // calculate derivatives
         vec2 dp1 = bspline2_val(t0, local_cp, local_span, 1);
         vec2 dp2 = bspline2_val(t0, local_cp, local_span, 2);
-        dist = min(dist, dist_pt2quadratic(pt, mat3x2(p1, dp1, .5 * dp2), 0., t1 - t0));
+        if(k == seg_size - 1) {
+            // last segment
+            float arc_length;
+            float dist_seg = dist_pt2quadratic(pt, mat3x2(p1, dp1, .5 * dp2), 0., t1 - t0, t1 - t0 - 1., arc_length);
+            if(dist > dist_seg) {
+                dist = dist_seg;
+                if(arc_length > 0. && int(arc_length / (4. * width)) % 2 == 0) {
+                    // dashing
+                    dist = 2. * width;
+                }
+            }
+        } else {
+            dist = min(dist, dist_pt2quadratic(pt, mat3x2(p1, dp1, .5 * dp2), 0., t1 - t0));
+        }
     }
 
     return dist;
