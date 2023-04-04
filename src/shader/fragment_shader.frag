@@ -8,7 +8,7 @@ uniform float width;
 uniform float dashing;
 uniform uint control_point_size;
 layout(std140) uniform spline_data {
-    vec2 control_point[MAX_ARRAY_SIZE];
+    vec4 control_point[MAX_ARRAY_SIZE];
 };
 
 in vec3 color;
@@ -111,10 +111,10 @@ float dist_pt2quadratic(vec2 pt, mat3x2 coef_mat, float t0, float t1) {
 }
 
 // calculate uniform bspline value using De Boor'a algorithm, t \in [span[1],span[2]]
-vec2 bspline2_val(float t, vec2 cp[3], float span[4], int der) {
+vec4 bspline2_val(float t, vec4 cp[3], float span[4], int der) {
     const int order = 2;
     if(der > order) {
-        return vec2(0.);
+        return vec4(0.);
     }
     for(int i = order; i > 0; --i, --der) {
         for(int k = 0; k < i; ++k) {
@@ -129,6 +129,7 @@ vec2 bspline2_val(float t, vec2 cp[3], float span[4], int der) {
     return cp[0];
 }
 
+// calculate color such that a smooth transition appears when dist is slightly larger than width
 void render_smooth(float dist, float width, vec3 color) {
     if(dist < width * 1.5) {
         dist = smoothstep(width, width * 1.5, dist);
@@ -136,34 +137,56 @@ void render_smooth(float dist, float width, vec3 color) {
     }
 }
 
-// draw a 2nd order bspline (control points given by uniform variable `spline_data`)
+// draw two 2nd order bspline (control points given by uniform variable `spline_data`)
 void draw_bspline2(vec2 pt, vec3 color) {
     int seg_size = int(control_point_size) - 2;
 
     for(int k = 0; k < seg_size; ++k) {
         float t0 = k == 0 ? 0. : float(k) + .5;
-        float t1 = k == seg_size - 1 ? float(seg_size + 1) : float(k) + 1.5;
-        vec2[] local_cp = vec2[3](control_point[k], control_point[k + 1], control_point[k + 2]);
-        float[] local_span = float[4](k <= 1 ? 0. : t0 - 1., t0, t1, k >= seg_size - 2 ? float(seg_size + 1) : t1 + 1.);
-        vec2 p1 = bspline2_val(t0, local_cp, local_span, 0);
+        float s1_t1 = k == seg_size - 2 ? float(seg_size) : float(k) + 1.5;
+        float s2_t1 = k == seg_size - 1 ? float(seg_size + 1) : float(k) + 1.5;
+        vec4[] local_cp = vec4[3](control_point[k], control_point[k + 1], control_point[k + 2]);
+        float[] s1_local_span = float[4](k <= 1 ? 0. : t0 - 1., t0, s1_t1, k >= seg_size - 3 ? float(seg_size) : s1_t1 + 1.);
+        float[] s2_local_span = float[4](k <= 1 ? 0. : t0 - 1., t0, s2_t1, k >= seg_size - 2 ? float(seg_size + 1) : s2_t1 + 1.);
 
+        // calculate value
+        vec4 p1_packed = bspline2_val(t0, local_cp, s2_local_span, 0);
         // calculate derivatives
-        vec2 dp1 = bspline2_val(t0, local_cp, local_span, 1);
-        vec2 dp2 = bspline2_val(t0, local_cp, local_span, 2);
+        vec4 dp1_packed = bspline2_val(t0, local_cp, s2_local_span, 1);
+        vec4 dp2_packed = bspline2_val(t0, local_cp, s2_local_span, 2);
+
         float dist;
+        // 1st bspline
+        if(k < seg_size - 1) {
+            vec2 s1_p1, s1_dp1, s1_dp2;
+            if(k >= seg_size - 3) {
+                // last two segments, span is different
+                s1_p1 = bspline2_val(t0, local_cp, s1_local_span, 0).xy;
+                s1_dp1 = bspline2_val(t0, local_cp, s1_local_span, 1).xy;
+                s1_dp2 = bspline2_val(t0, local_cp, s1_local_span, 2).xy;
+            } else {
+                s1_p1 = p1_packed.xy;
+                s1_dp1 = dp1_packed.xy;
+                s1_dp2 = dp2_packed.xy;
+            }
+            dist = dist_pt2quadratic(pt, mat3x2(s1_p1, s1_dp1, .5 * s1_dp2), 0., s1_t1 - t0);
+            // draw this segment
+            render_smooth(dist, .6 * width, color * .5);
+        }
+
+        // 2nd bspline
         if(k == seg_size - 1) {
             // last segment
             float arc_length;
-            dist = dist_pt2quadratic(pt, mat3x2(p1, dp1, .5 * dp2), 0., t1 - t0, t1 - t0 - 1., arc_length);
+            dist = dist_pt2quadratic(pt, mat3x2(p1_packed.zw, dp1_packed.zw, .5 * dp2_packed.zw), 0., s2_t1 - t0, s2_t1 - t0 - 1., arc_length);
             if(arc_length > 0. && int(arc_length / (.5 * dashing)) % 2 == 0) {
                 dist = 10. * width; // dashing
             }
         } else {
-            dist = dist_pt2quadratic(pt, mat3x2(p1, dp1, .5 * dp2), 0., t1 - t0);
+            dist = dist_pt2quadratic(pt, mat3x2(p1_packed.zw, dp1_packed.zw, .5 * dp2_packed.zw), 0., s2_t1 - t0);
         }
-
         // draw this segment
-        render_smooth(dist, .5 * width, color);
+        render_smooth(dist, .4 * width, color);
     }
 }
 
@@ -186,47 +209,50 @@ void main() {
 
     if(control_point_size == 1u) {
         // draw a point
-        render_smooth(distance(uv, control_point[0]), .5 * width, foreground_color);
+        render_smooth(distance(uv, control_point[0].xy), .5 * width, foreground_color);
     } else if(control_point_size == 2u) {
         // draw a line segment
-        render_smooth(dist_pt2line(uv, control_point[0], control_point[1]), .5 * width, foreground_color);
+        render_smooth(dist_pt2line(uv, control_point[0].xy, control_point[1].xy), .5 * width, foreground_color);
     } else {
         // draw a bspline curve
-        // render_smooth(dist_pt2bspline2(uv), .5 * width, foreground_color);
         draw_bspline2(uv, foreground_color);
 
         // and data points and knot points
         int seg_size = int(control_point_size) - 2;
         for(int k = 0; k < seg_size; ++k) {
             float t0 = k == 0 ? 0. : float(k) + .5;
-            float t1 = k == seg_size - 1 ? float(seg_size + 1) : float(k) + 1.5;
-            vec2[] local_cp = vec2[3](control_point[k], control_point[k + 1], control_point[k + 2]);
-            float[] local_span = float[4](k <= 1 ? 0. : t0 - 1., t0, t1, k >= seg_size - 2 ? float(seg_size + 1) : t1 + 1.);
+            float s1_t1 = k == seg_size - 2 ? float(seg_size) : float(k) + 1.5;
+            float s2_t1 = k == seg_size - 1 ? float(seg_size + 1) : float(k) + 1.5;
+            vec4[] local_cp = vec4[3](control_point[k], control_point[k + 1], control_point[k + 2]);
+            float[] s1_local_span = float[4](k <= 1 ? 0. : t0 - 1., t0, s1_t1, k >= seg_size - 3 ? float(seg_size) : s1_t1 + 1.);
+            float[] s2_local_span = float[4](k <= 1 ? 0. : t0 - 1., t0, s2_t1, k >= seg_size - 2 ? float(seg_size + 1) : s2_t1 + 1.);
 
-            vec2 knot_point = bspline2_val(t0, local_cp, local_span, 0);
+            vec2 knot_point = bspline2_val(t0, local_cp, s1_local_span, 0).xy;
             vec2 data_point;
 
-            render_smooth(distance(uv, knot_point), 1.5 * width, foreground_color2);
+            if(k < seg_size - 1) {
+                render_smooth(distance(uv, knot_point), 1.5 * width, foreground_color2);
+            }
             if(k == seg_size - 1) {
-                data_point = bspline2_val(t1, local_cp, local_span, 0);
-                render_smooth(distance(uv, data_point), 1.5 * width, foreground_color2);
+                data_point = bspline2_val(s2_t1, local_cp, s2_local_span, 0).zw;
+                // render_smooth(distance(uv, data_point), 1.5 * width, foreground_color2);
                 render_smooth(distance(uv, data_point), 2. * width, foreground_color3);
-                data_point = bspline2_val(t1 - 1., local_cp, local_span, 0);
+                data_point = bspline2_val(s2_t1 - 1., local_cp, s2_local_span, 0).zw;
             }
 
             if(k == 0) {
                 data_point = knot_point;
                 render_smooth(distance(uv, data_point), 2. * width, foreground_color3);
-                data_point = bspline2_val(t0 + 1., local_cp, local_span, 0);
+                data_point = bspline2_val(t0 + 1., local_cp, s2_local_span, 0).zw;
             } else if(k < seg_size - 1) {
-                data_point = bspline2_val(.5 * (t0 + t1), local_cp, local_span, 0);
+                data_point = bspline2_val(.5 * (t0 + s2_t1), local_cp, s2_local_span, 0).zw;
             }
             render_smooth(distance(uv, data_point), 2. * width, foreground_color3);
         }
 
         // and control points
         for(uint i = 0u; i < control_point_size; ++i) {
-            render_smooth(distance(uv, control_point[i]), width, foreground_color4);
+            render_smooth(distance(uv, control_point[i].zw), width, foreground_color4);
         }
     }
 }

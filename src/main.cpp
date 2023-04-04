@@ -59,21 +59,27 @@ static void draw(void* args_ptr) {
     };
 
     // update uniform buffer
-    bool add_current = (data.back() - current_pt).mag() > coord_type{2};
-    if (add_current) { data.push_back(current_pt); }
+    data.push_back(current_pt);
     // TODO: Draw a separate spline containing current point
 
     // pad every point to a vec4
     std::size_t padded_data_size = data.size() * 4;
-    std::unique_ptr<float[]> ptr(new float[padded_data_size]);
-    if (data.size() >= 2) {
+    std::unique_ptr<float[]> ptr(new float[padded_data_size]{});
+    if (data.size() >= 3) {
+        intp::InterpolationFunction1D<pt_type, coord_type> origin_vec_spline(
+            std::make_pair(data.begin(), --data.end()), 2);
         intp::InterpolationFunction1D<Vec<2, float>, float> vec_spline(
             intp::util::get_range(data), 2);
 
         for (std::size_t i = 0; i < data.size(); ++i) {
+            auto& cp_origin = origin_vec_spline.spline().control_points()(i);
             auto& cp = vec_spline.spline().control_points()(i);
-            ptr[4 * i] = clip_x(cp.x());
-            ptr[4 * i + 1] = clip_y(cp.y());
+            if (i < data.size() - 1) {
+                ptr[4 * i] = clip_x(cp_origin.x());
+                ptr[4 * i + 1] = clip_y(cp_origin.y());
+            }
+            ptr[4 * i + 2] = clip_x(cp.x());
+            ptr[4 * i + 3] = clip_y(cp.y());
         }
     } else {
         // point number too few for constructing a 2nd order spline
@@ -92,7 +98,7 @@ static void draw(void* args_ptr) {
                     ptr.get());
     // TODO: No need to update the whole buffer.
 
-    if (add_current) { data.pop_back(); }
+    data.pop_back();
 
     // Draw the full-screen quad, to let OpenGL invoke fragment shader
     glBindVertexArray(vao);
