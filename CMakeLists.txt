@@ -15,7 +15,7 @@ target_compile_options(index PUBLIC -fwasm-exceptions)
 target_link_options(index PUBLIC -fwasm-exceptions)
 # target_compile_definitions(index PUBLIC "EXPLICIT_SWAP")
 
-target_compile_options(index PUBLIC -Weverything -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-pre-c++14-compat -Wno-exit-time-destructors -Wno-padded)
+target_compile_options(index PUBLIC -Weverything -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-pre-c++14-compat -Wno-exit-time-destructors -Wno-padded -Wno-unsafe-buffer-usage)
 
 file(GLOB shader_src CONFIGURE_DEPENDS src/shader/*)
 set_property(TARGET index PROPERTY LINK_DEPENDS ${shader_src})

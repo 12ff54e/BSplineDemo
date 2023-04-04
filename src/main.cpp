@@ -19,11 +19,12 @@ constexpr int canvas_height = 600;
 static GLuint vao;
 // uniform buffer id
 static GLuint ubo;
+// location of uniform var control_point_size
+static GLint control_point_size_loc;
 
 // Parameters send to main loop callback function are encapsulated in this
 // struct, they are all reference to static objects.
 struct main_loop_args {
-    ShaderProgram& program_ref;
     std::vector<pt_type>& data_ref;
     pt_type& current_pt_ref;
 };
@@ -40,7 +41,6 @@ struct main_loop_args {
 static void draw(void* args_ptr) {
     // unpack args
     auto args = *static_cast<main_loop_args*>(args_ptr);
-    auto& program = args.program_ref;
     auto& data = args.data_ref;
     auto& current_pt = args.current_pt_ref;
 
@@ -89,8 +89,7 @@ static void draw(void* args_ptr) {
         }
     }
     // update control point number
-    glUniform1ui(glGetUniformLocation(program, "control_point_size"),
-                 data.size());
+    glUniform1ui(control_point_size_loc, data.size());
     // update control points
     glBindBuffer(GL_UNIFORM_BUFFER, ubo);
     glBufferSubData(GL_UNIFORM_BUFFER, 0,
@@ -167,8 +166,9 @@ int main() {
                  GL_STATIC_DRAW);
 
     const GLuint control_point_size = 0;
-    glUniform1ui(glGetUniformLocation(program, "control_point_size"),
-                 control_point_size);
+    control_point_size_loc =
+        glGetUniformLocation(program, "control_point_size");
+    glUniform1ui(control_point_size_loc, control_point_size);
 
     // bind ubo to shader program
     GLuint blockIndex = glGetUniformBlockIndex(program, "spline_data");
@@ -184,7 +184,7 @@ int main() {
     data.reserve(MAX_ARRAY_SIZE);
     static pt_type current_pt;
 
-    static main_loop_args args{program, data, current_pt};
+    static main_loop_args args{data, current_pt};
 
     auto handle_mouse_click = [](int, const EmscriptenMouseEvent* mouse_event,
                                  void* user_data) {
@@ -208,6 +208,7 @@ int main() {
     auto handle_key = [](int, const EmscriptenKeyboardEvent* key_event,
                          void* user_data) {
         auto& vec = *static_cast<std::vector<pt_type>*>(user_data);
+        std::cout << key_event->code << " pressed\n";
         if (!vec.empty() && key_event->code == std::string{"Backspace"}) {
             vec.pop_back();
         }
