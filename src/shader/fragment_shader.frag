@@ -7,6 +7,7 @@ uniform vec2 canvas_size;
 uniform float width;
 uniform float dashing;
 uniform uint control_point_size;
+uniform bool periodic;
 layout(std140) uniform spline_data {
     vec4 control_point[MAX_ARRAY_SIZE];
 };
@@ -14,6 +15,7 @@ layout(std140) uniform spline_data {
 in vec3 color;
 out vec4 frag_color;
 
+// x - f(x) / f'(x), used in calculating distance from a parabola
 float ns(float x, vec2 pt0, float a) {
     float a2x2 = 2. * a * a * x * x;
     return x - (pt0.x + 2. * a2x2 * x) / (1. - 2. * a * pt0.y + 3. * a2x2);
@@ -137,56 +139,67 @@ void render_smooth(float dist, float width, vec3 color) {
     }
 }
 
-// draw two 2nd order bspline (control points given by uniform variable `spline_data`)
-void draw_bspline2(vec2 pt, vec3 color) {
-    int seg_size = int(control_point_size) - 2;
+/**
+ * @brief Draw two 2nd order bspline (control points given by uniform variable `spline_data`)
+ *
+ * @param pt current render point
+ * @param color color of spline
+ * @param size number of control points
+ * @param periodic periodic spline or not
+ * @param visible a bit-mask specifying visibility of each spline
+ */
+void draw_bspline2(vec2 pt, vec3[2] line_color, uint[2] size, float[2] line_width, bool[2] periodic, int visible) {
+    int seg_size1 = int(size[0]) - (periodic[0] ? 1 : 2);
+    int seg_size2 = int(size[1]) - (periodic[1] ? 1 : 2);
 
-    for(int k = 0; k < seg_size; ++k) {
-        float t0 = k == 0 ? 0. : float(k) + .5;
-        float s1_t1 = k == seg_size - 2 ? float(seg_size) : float(k) + 1.5;
-        float s2_t1 = k == seg_size - 1 ? float(seg_size + 1) : float(k) + 1.5;
-        vec4[] local_cp = vec4[3](control_point[k], control_point[k + 1], control_point[k + 2]);
-        float[] s1_local_span = float[4](k <= 1 ? 0. : t0 - 1., t0, s1_t1, k >= seg_size - 3 ? float(seg_size) : s1_t1 + 1.);
-        float[] s2_local_span = float[4](k <= 1 ? 0. : t0 - 1., t0, s2_t1, k >= seg_size - 2 ? float(seg_size + 1) : s2_t1 + 1.);
+    // size[1] always larger than size[0], and the loop is done for the larger count
+    for(int k = 0; k < seg_size2; ++k) {
+        // calculate curve parameters according to 1st spline
+        float t0 = periodic[0] ? float(k) + .5 : k == 0 ? 0. : float(k) + .5;
+        float t1 = periodic[0] ? float((k + 1) % seg_size1) + .5 : k == seg_size1 - 1 ? float(seg_size1 + 1) : float(k) + 1.5;
+        vec4[] local_cp = vec4[3](control_point[k], control_point[k + 1], control_point[(k + 2) % (int(size[0]))]);
+        float[] local_span = float[4](periodic[0] ? t0 - 1. : k <= 1 ? 0. : t0 - 1., t0, t1, periodic[0] ? t1 + 1. : k >= seg_size1 - 2 ? float(seg_size1 + 1) : t1 + 1.);
 
-        // calculate value
-        vec4 p1_packed = bspline2_val(t0, local_cp, s2_local_span, 0);
-        // calculate derivatives
-        vec4 dp1_packed = bspline2_val(t0, local_cp, s2_local_span, 1);
-        vec4 dp2_packed = bspline2_val(t0, local_cp, s2_local_span, 2);
+        vec4 v_packed = bspline2_val(t0, local_cp, local_span, 0);
+        vec4 d1_packed = bspline2_val(t0, local_cp, local_span, 1);
+        vec4 d2_packed = bspline2_val(t0, local_cp, local_span, 2);
 
-        float dist;
-        // 1st bspline
-        if(k < seg_size - 1) {
-            vec2 s1_p1, s1_dp1, s1_dp2;
-            if(k >= seg_size - 3) {
-                // last two segments, span is different
-                s1_p1 = bspline2_val(t0, local_cp, s1_local_span, 0).xy;
-                s1_dp1 = bspline2_val(t0, local_cp, s1_local_span, 1).xy;
-                s1_dp2 = bspline2_val(t0, local_cp, s1_local_span, 2).xy;
+        // 1st spline
+        if(k < seg_size1 && bool(visible & 1)) {
+            float dist = dist_pt2quadratic(pt, mat3x2(v_packed.xy, d1_packed.xy, .5 * d2_packed.xy), 0., t1 - t0);
+            render_smooth(dist, line_width[0], line_color[0]);
+        }
+
+        // 2nd spline
+        if(bool(visible & 2)) {
+            float s2_t0 = periodic[1] ? float(k) + .5 : k == 0 ? 0. : float(k) + .5;
+            float s2_t1 = periodic[1] ? float((k + 1) % seg_size2) + .5 : k == seg_size2 - 1 ? float(seg_size2 + 1) : float(k) + 1.5;
+            mat3x2 coef;
+            if(k < seg_size1 - 2) {
+                coef = mat3x2(v_packed.zw, d1_packed.zw, .5 * d2_packed.zw);
             } else {
-                s1_p1 = p1_packed.xy;
-                s1_dp1 = dp1_packed.xy;
-                s1_dp2 = dp2_packed.xy;
-            }
-            dist = dist_pt2quadratic(pt, mat3x2(s1_p1, s1_dp1, .5 * s1_dp2), 0., s1_t1 - t0);
-            // draw this segment
-            render_smooth(dist, .6 * width, color * .5);
-        }
+                vec4[] s2_cp = vec4[3](control_point[k], control_point[k + 1], control_point[(k + 2) % (int(size[1]))]);
+                float[] s2_span = float[4](periodic[1] ? s2_t0 - 1. : k <= 1 ? 0. : s2_t0 - 1., s2_t0, s2_t1, periodic[1] ? s2_t1 + 1. : k >= seg_size2 - 2 ? float(seg_size2 + 1) : s2_t1 + 1.);
 
-        // 2nd bspline
-        if(k == seg_size - 1) {
-            // last segment
-            float arc_length;
-            dist = dist_pt2quadratic(pt, mat3x2(p1_packed.zw, dp1_packed.zw, .5 * dp2_packed.zw), 0., s2_t1 - t0, s2_t1 - t0 - 1., arc_length);
-            if(arc_length > 0. && int(arc_length / (.5 * dashing)) % 2 == 0) {
-                dist = 10. * width; // dashing
+                vec2 s2_v = bspline2_val(s2_t0, s2_cp, s2_span, 0).zw;
+                vec2 s2_d1 = bspline2_val(s2_t0, s2_cp, s2_span, 1).zw;
+                vec2 s2_d2 = bspline2_val(s2_t0, s2_cp, s2_span, 2).zw;
+                coef = mat3x2(s2_v, s2_d1, .5 * s2_d2);
             }
-        } else {
-            dist = dist_pt2quadratic(pt, mat3x2(p1_packed.zw, dp1_packed.zw, .5 * dp2_packed.zw), 0., s2_t1 - t0);
+
+            float dist;
+            if(k == seg_size2 - 1) {
+                float arc_length;
+                dist = dist_pt2quadratic(pt, coef, 0., s2_t1 - s2_t0, k == 0 ? 1. : .5, arc_length);
+                if(arc_length > 0. && int(arc_length / (.5 * dashing)) % 2 == 0) {
+                    dist = 10. * width; // dashing
+                }
+            } else {
+                dist = dist_pt2quadratic(pt, coef, 0., s2_t1 - s2_t0);
+            }
+
+            render_smooth(dist, line_width[1], line_color[1]);
         }
-        // draw this segment
-        render_smooth(dist, .4 * width, color);
     }
 }
 
@@ -198,24 +211,34 @@ void main() {
     // starting from lower-left corner, where a is aspect ratio.
     // (Note: it depends on the qualifier `origin_upper_left` and `pixel_center_integer` of gl_FragCoord)
 
-    // background being white
     vec3 background_color = color;
     // foreground being light blue (default color of mma's plot)
+    // TODO: color should be a uniform
     vec3 foreground_color = vec3(0.368417, 0.506779, 0.709798);
     vec3 foreground_color2 = vec3(0.880722, 0.611041, 0.142051);
     vec3 foreground_color3 = vec3(0.560181, 0.691569, 0.194885);
     vec3 foreground_color4 = vec3(0.922526, 0.385626, 0.209179);
     frag_color = vec4(background_color, 1.0);
 
+    float fixed_line_width = .6 * width;
+    float pending_line_width = .3 * width;
+    float[] line_width = float[2](fixed_line_width, pending_line_width);
+    vec3 fixed_line_color = .5 * foreground_color;
+    vec3 pending_line_color = foreground_color;
+    vec3[] line_colors = vec3[2](.5 * foreground_color, foreground_color);
+
     if(control_point_size == 1u) {
         // draw a point
         render_smooth(distance(uv, control_point[0].xy), .5 * width, foreground_color);
     } else if(control_point_size == 2u) {
         // draw a line segment
-        render_smooth(dist_pt2line(uv, control_point[0].xy, control_point[1].xy), .5 * width, foreground_color);
+        render_smooth(dist_pt2line(uv, control_point[0].xy, control_point[1].xy), pending_line_width, pending_line_color);
     } else {
-        // draw a bspline curve
-        draw_bspline2(uv, foreground_color);
+        if(control_point_size == 3u) {
+            render_smooth(dist_pt2line(uv, control_point[0].xy, control_point[1].xy), fixed_line_width, fixed_line_color);
+        }
+        // draw bspline curve
+        draw_bspline2(uv, line_colors, uint[2](control_point_size - 1u, control_point_size), line_width, bool[2](periodic, false), periodic ? 1 : 3);
 
         // and data points and knot points
         int seg_size = int(control_point_size) - 2;

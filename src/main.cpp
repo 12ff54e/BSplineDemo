@@ -21,12 +21,15 @@ static GLuint vao;
 static GLuint ubo;
 // location of uniform var control_point_size
 static GLint control_point_size_loc;
+// location of uniform var periodic
+static GLint periodic_loc;
 
 // Parameters send to main loop callback function are encapsulated in this
 // struct, they are all reference to static objects.
 struct main_loop_args {
     std::vector<pt_type>& data_ref;
     pt_type& current_pt_ref;
+    bool& spline_closed_ref;
 };
 
 #define exec_and_check(func, ...)                             \
@@ -43,6 +46,7 @@ static void draw(void* args_ptr) {
     auto args = *static_cast<main_loop_args*>(args_ptr);
     auto& data = args.data_ref;
     auto& current_pt = args.current_pt_ref;
+    auto& spline_closed = args.spline_closed_ref;
 
     // set background color to grey
     glClearColor(0.3f, 0.3f, 0.3f, 1.f);
@@ -90,6 +94,7 @@ static void draw(void* args_ptr) {
     }
     // update control point number
     glUniform1ui(control_point_size_loc, data.size());
+    glUniform1i(periodic_loc, static_cast<GLint>(spline_closed));
     // update control points
     glBindBuffer(GL_UNIFORM_BUFFER, ubo);
     glBufferSubData(GL_UNIFORM_BUFFER, 0,
@@ -169,6 +174,8 @@ int main() {
     control_point_size_loc =
         glGetUniformLocation(program, "control_point_size");
     glUniform1ui(control_point_size_loc, control_point_size);
+    periodic_loc = glGetUniformLocation(program, "periodic");
+    glUniform1i(periodic_loc, 0);
 
     // bind ubo to shader program
     GLuint blockIndex = glGetUniformBlockIndex(program, "spline_data");
@@ -183,8 +190,9 @@ int main() {
     static std::vector<pt_type> data;
     data.reserve(MAX_ARRAY_SIZE);
     static pt_type current_pt;
+    static bool spline_closed = false;
 
-    static main_loop_args args{data, current_pt};
+    static main_loop_args args{data, current_pt, spline_closed};
 
     auto handle_mouse_click = [](int, const EmscriptenMouseEvent* mouse_event,
                                  void* user_data) {
@@ -222,8 +230,8 @@ int main() {
     };
     emscripten_set_mousedown_callback(canvas, static_cast<void*>(&data), false,
                                       handle_mouse_click);
-    emscripten_set_keyup_callback(canvas, static_cast<void*>(&data), false,
-                                  handle_key);
+    emscripten_set_keydown_callback(canvas, static_cast<void*>(&data), false,
+                                    handle_key);
     emscripten_set_mousemove_callback(canvas, static_cast<void*>(&current_pt),
                                       false, handle_mouse_move);
 
