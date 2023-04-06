@@ -14,6 +14,7 @@ using pt_type = Vec<2, coord_type>;  // canvas position type
 
 constexpr int canvas_width = 800;
 constexpr int canvas_height = 600;
+constexpr coord_type close_threshold = 10;
 
 // vertex array buffer
 static GLuint vao;
@@ -23,14 +24,11 @@ static GLuint ubo;
 static GLint control_point_size_loc;
 // location of uniform var periodic
 static GLint periodic_loc;
+// location of uniform var visible
+static GLint visible_loc;
 
-// Parameters send to main loop callback function are encapsulated in this
-// struct, they are all reference to static objects.
-struct main_loop_args {
-    std::vector<pt_type>& data_ref;
-    pt_type& current_pt_ref;
-    bool& spline_closed_ref;
-};
+static pt_type current_pt;
+static GLint spline_closed = 0;
 
 #define exec_and_check(func, ...)                             \
     do {                                                      \
@@ -40,14 +38,13 @@ struct main_loop_args {
         }                                                     \
     } while (false)
 
-// main loop
-static void draw(void* args_ptr) {
-    // unpack args
-    auto args = *static_cast<main_loop_args*>(args_ptr);
-    auto& data = args.data_ref;
-    auto& current_pt = args.current_pt_ref;
-    auto& spline_closed = args.spline_closed_ref;
+static std::vector<pt_type>& get_data() {
+    static std::vector<pt_type> data;
+    return data;
+}
 
+// main loop
+static void draw() {
     // set background color to grey
     glClearColor(0.3f, 0.3f, 0.3f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -62,39 +59,52 @@ static void draw(void* args_ptr) {
         return 1.f - static_cast<float>(y) / static_cast<float>(canvas_height);
     };
 
-    // update uniform buffer
-    data.push_back(current_pt);
-    // TODO: Draw a separate spline containing current point
+    // prepare data for pending spline when the actual spline is not closed
+    if (!(spline_closed & 1)) {
+        // hint for forming a closed spline, note that coordinates are in
+        // pixel
+        if ((current_pt - get_data().front()).mag() < close_threshold) {
+            // set 2nd spline to be closed
+            spline_closed |= 2;
+            current_pt = get_data().front();
+        } else {
+            // unset bit
+            spline_closed &= ~2;
+        }
+    }
+    get_data().push_back(current_pt);
 
     // pad every point to a vec4
-    std::size_t padded_data_size = data.size() * 4;
+    std::size_t padded_data_size = get_data().size() * 4;
     std::unique_ptr<float[]> ptr(new float[padded_data_size]{});
-    if (data.size() >= 3) {
+    if (get_data().size() >= 3) {
         intp::InterpolationFunction1D<pt_type, coord_type> origin_vec_spline(
-            std::make_pair(data.begin(), --data.end()), 2);
+            std::make_pair(get_data().begin(), --get_data().end()), 2,
+            spline_closed & 1);
         intp::InterpolationFunction1D<Vec<2, float>, float> vec_spline(
-            intp::util::get_range(data), 2);
+            intp::util::get_range(get_data()), 2, spline_closed & 2);
 
-        for (std::size_t i = 0; i < data.size(); ++i) {
-            auto& cp_origin = origin_vec_spline.spline().control_points()(i);
-            auto& cp = vec_spline.spline().control_points()(i);
-            if (i < data.size() - 1) {
-                ptr[4 * i] = clip_x(cp_origin.x());
-                ptr[4 * i + 1] = clip_y(cp_origin.y());
+        auto& cp_origin = origin_vec_spline.spline().control_points();
+        auto& cp = vec_spline.spline().control_points();
+        for (std::size_t i = 0; i < cp.size(); ++i) {
+            if (i < cp_origin.size()) {
+                ptr[4 * i] = clip_x(cp_origin(i).x());
+                ptr[4 * i + 1] = clip_y(cp_origin(i).y());
             }
-            ptr[4 * i + 2] = clip_x(cp.x());
-            ptr[4 * i + 3] = clip_y(cp.y());
+            ptr[4 * i + 2] = clip_x(cp(i).x());
+            ptr[4 * i + 3] = clip_y(cp(i).y());
         }
     } else {
         // point number too few for constructing a 2nd order spline
-        for (std::size_t i = 0; i < data.size(); ++i) {
-            ptr[4 * i] = clip_x(data[i].x());
-            ptr[4 * i + 1] = clip_y(data[i].y());
+        for (std::size_t i = 0; i < get_data().size(); ++i) {
+            ptr[4 * i] = clip_x(get_data()[i].x());
+            ptr[4 * i + 1] = clip_y(get_data()[i].y());
         }
     }
     // update control point number
-    glUniform1ui(control_point_size_loc, data.size());
-    glUniform1i(periodic_loc, static_cast<GLint>(spline_closed));
+    glUniform1ui(control_point_size_loc, get_data().size());
+    glUniform1i(periodic_loc, spline_closed);
+    glUniform1i(visible_loc, spline_closed & 1 ? 1 : 3);
     // update control points
     glBindBuffer(GL_UNIFORM_BUFFER, ubo);
     glBufferSubData(GL_UNIFORM_BUFFER, 0,
@@ -102,7 +112,7 @@ static void draw(void* args_ptr) {
                     ptr.get());
     // TODO: No need to update the whole buffer.
 
-    data.pop_back();
+    get_data().pop_back();
 
     // Draw the full-screen quad, to let OpenGL invoke fragment shader
     glBindVertexArray(vao);
@@ -175,7 +185,7 @@ int main() {
         glGetUniformLocation(program, "control_point_size");
     glUniform1ui(control_point_size_loc, control_point_size);
     periodic_loc = glGetUniformLocation(program, "periodic");
-    glUniform1i(periodic_loc, 0);
+    visible_loc = glGetUniformLocation(program, "visible");
 
     // bind ubo to shader program
     GLuint blockIndex = glGetUniformBlockIndex(program, "spline_data");
@@ -187,55 +197,54 @@ int main() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    static std::vector<pt_type> data;
-    data.reserve(MAX_ARRAY_SIZE);
-    static pt_type current_pt;
-    static bool spline_closed = false;
-
-    static main_loop_args args{data, current_pt, spline_closed};
+    get_data().reserve(MAX_ARRAY_SIZE);
 
     auto handle_mouse_click = [](int, const EmscriptenMouseEvent* mouse_event,
-                                 void* user_data) {
-        auto& vec = *static_cast<std::vector<pt_type>*>(user_data);
+                                 void*) {
+        pt_type pt{mouse_event->targetX, mouse_event->targetY};
         switch (mouse_event->button) {
-            case 0:
-                if (vec.size() < MAX_ARRAY_SIZE) {
-                    vec.emplace_back(mouse_event->targetX,
-                                     mouse_event->targetY);
-                } else {
+            case 0:  // left click
+                if (spline_closed & 1) { break; }
+                if (get_data().size() >= MAX_ARRAY_SIZE - 1) {
                     std::cout << "Point number reach maximum(" << MAX_ARRAY_SIZE
                               << ").\n";
+                    break;
                 }
+                if (get_data().size() > 2 &&
+                    (pt - get_data().front()).mag() < close_threshold) {
+                    // close the spline
+                    pt = get_data().front();
+                    spline_closed |= 1;
+                }
+                get_data().emplace_back(std::move(pt));
                 break;
-            case 2:
-                if (!vec.empty()) { vec.pop_back(); }
+            case 2:  // right click
+                if (!get_data().empty()) { get_data().pop_back(); }
+                spline_closed &= ~1;
                 break;
         }
         return EM_TRUE;
     };
-    auto handle_key = [](int, const EmscriptenKeyboardEvent* key_event,
-                         void* user_data) {
-        auto& vec = *static_cast<std::vector<pt_type>*>(user_data);
-        std::cout << key_event->code << " pressed\n";
-        if (!vec.empty() && key_event->code == std::string{"Backspace"}) {
-            vec.pop_back();
+    auto handle_key = [](int, const EmscriptenKeyboardEvent* key_event, void*) {
+        if (!get_data().empty() &&
+            key_event->code == std::string{"Backspace"}) {
+            get_data().pop_back();
+            return EM_TRUE;
         }
-        return EM_TRUE;
+        return EM_FALSE;
     };
     auto handle_mouse_move = [](int, const EmscriptenMouseEvent* mouse_event,
-                                void* user_data) {
-        *static_cast<pt_type*>(user_data) =
-            pt_type{mouse_event->targetX, mouse_event->targetY};
+                                void*) {
+        current_pt = pt_type{mouse_event->targetX, mouse_event->targetY};
         return EM_TRUE;
     };
-    emscripten_set_mousedown_callback(canvas, static_cast<void*>(&data), false,
+    emscripten_set_mousedown_callback(canvas, nullptr, false,
                                       handle_mouse_click);
-    emscripten_set_keydown_callback(canvas, static_cast<void*>(&data), false,
-                                    handle_key);
-    emscripten_set_mousemove_callback(canvas, static_cast<void*>(&current_pt),
-                                      false, handle_mouse_move);
+    emscripten_set_keydown_callback("body", nullptr, false, handle_key);
+    emscripten_set_mousemove_callback(canvas, nullptr, false,
+                                      handle_mouse_move);
 
-    emscripten_set_main_loop_arg(draw, static_cast<void*>(&args), 0, EM_FALSE);
+    emscripten_set_main_loop(draw, 0, EM_FALSE);
 
     // Prepare data for the full-screen quad
     {
