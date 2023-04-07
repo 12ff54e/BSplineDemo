@@ -209,7 +209,34 @@ void draw_bspline2(vec2 pt, vec3[2] line_color, uint[2] size, float[2] line_widt
     }
 }
 
-void draw_data_points() {
+void draw_data_points(vec2 pt, vec3 color, float point_size) {
+    bool p = bool(periodic & 1);
+    int cp_size = int(control_point_size) - (p ? 2 : 1);
+    int seg_size = int(control_point_size) - (p ? 2 : 3);
+    for(int k = 0; k < seg_size; ++k) {
+        float t0 = !p && k == 0 ? 0. : float(k) + .5;
+        float t1 = !p && k == seg_size - 1 ? float(seg_size + 1) : float(k) + 1.5;
+        vec4[] local_cp = vec4[3](control_point[k], control_point[(k + 1) % cp_size], control_point[(k + 2) % cp_size]);
+        float[] local_span = float[4](p ? t0 - 1. : k <= 1 ? 0. : t0 - 1., t0, t1, p ? t1 + 1. : k >= seg_size - 2 ? float(seg_size + 1) : t1 + 1.);
+
+        vec2 data_point;
+        if(p) {
+            data_point = bspline2_val(t0 + .5, local_cp, local_span, 0).xy;
+        } else {
+            if(k == seg_size - 1) {
+                data_point = bspline2_val(t1, local_cp, local_span, 0).xy;
+                render_smooth(distance(pt, data_point), point_size, color);
+            }
+            if(k == 0) {
+                data_point = bspline2_val(t0, local_cp, local_span, 0).xy;
+                render_smooth(distance(pt, data_point), point_size, color);
+                data_point = bspline2_val(t0 + 1., local_cp, local_span, 0).xy;
+            } else {
+                data_point = bspline2_val(t0 + .5, local_cp, local_span, 0).xy;
+            }
+        }
+        render_smooth(distance(pt, data_point), point_size, color);
+    }
 }
 void draw_knot_points() {
 }
@@ -238,18 +265,28 @@ void main() {
     vec3 pending_line_color = foreground_color;
     vec3[] line_colors = vec3[2](.5 * foreground_color, foreground_color);
 
+    float data_point_size = 2. * width;
+
     if(control_point_size == 1u) {
         // draw a point
         render_smooth(distance(uv, control_point[0].xy), .5 * width, foreground_color);
     } else if(control_point_size == 2u) {
         // draw a line segment
         render_smooth(dist_pt2line(uv, control_point[0].xy, control_point[1].xy), pending_line_width, pending_line_color);
+        render_smooth(distance(uv, control_point[0].xy), data_point_size, foreground_color3);
     } else {
         if(control_point_size == 3u) {
             render_smooth(dist_pt2line(uv, control_point[0].xy, control_point[1].xy), fixed_line_width, fixed_line_color);
         }
         // draw bspline curve
         draw_bspline2(uv, line_colors, uint[2](control_point_size - 1u, control_point_size), line_width, periodic, visible);
+
+        if(control_point_size == 3u) {
+            render_smooth(distance(uv, control_point[0].xy), data_point_size, foreground_color3);
+            render_smooth(distance(uv, control_point[1].xy), data_point_size, foreground_color3);
+        }
+        draw_data_points(uv, foreground_color3, data_point_size);
+        return;
 
         // and data points and knot points
         int seg_size = int(control_point_size) - 2;

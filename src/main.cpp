@@ -276,11 +276,11 @@ int main() {
             reinterpret_cast<void*>(sizeof(GLfloat) * pos_size));
     }
 
-    std::cout << "\nLeft click to add new points;\n";
-    std::cout << "Right click / Backspace to remove a point;\n";
-    std::cout
-        << "Green, orange and red points are data (clicked) points, knots "
-           "points (define segments) and control points respectively.\n";
+    std::cout << "\nTo add new points, click left button;\n";
+    std::cout << "Tto delete points, click right button or press backspace;\n";
+    std::cout << "Data (clicked) points, knots points (define segments) and "
+                 "control points,  respectively, are represented by the color "
+                 "green, orange and red.\n";
 
 #ifdef EXPLICIT_SWAP
     // commit frame after draw
