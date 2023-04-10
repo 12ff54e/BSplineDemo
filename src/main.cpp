@@ -56,7 +56,7 @@ static void draw() {
                .5f * ar;
     };
     auto clip_y = [](coord_type y) -> float {
-        return 1.f - static_cast<float>(y) / static_cast<float>(canvas_height);
+        return .5f - static_cast<float>(y) / static_cast<float>(canvas_height);
     };
 
     // prepare data for pending spline when the actual spline is not closed

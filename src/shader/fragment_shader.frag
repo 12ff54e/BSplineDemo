@@ -133,9 +133,10 @@ vec4 bspline2_val(float t, vec4 cp[3], float span[4], int der) {
 }
 
 // calculate color such that a smooth transition appears when dist is slightly larger than width
-void render_smooth(float dist, float width, vec3 color) {
-    if(dist < width * 1.5) {
-        dist = smoothstep(width, width * 1.5, dist);
+void render_smooth(float dist, float elem_size, vec3 color) {
+    float aa_width = float(2) / canvas_size.y;
+    if(dist < elem_size + aa_width) {
+        dist = smoothstep(elem_size, elem_size + aa_width, dist);
         frag_color = vec4(mix(color, frag_color.xyz, dist), 1.);
     }
 }
@@ -243,7 +244,7 @@ void draw_knot_points() {
 
 void main() {
     float aspect_ratio = canvas_size.x / canvas_size.y;
-    vec2 uv = (gl_FragCoord.xy / canvas_size) - vec2(.5, 0.);
+    vec2 uv = (gl_FragCoord.xy / canvas_size) - vec2(.5, .5);
     uv.x *= aspect_ratio;
     // uv is normalized coordinate with y from 0 to 1 and x from -a/2 to a/2, 
     // starting from lower-left corner, where a is aspect ratio.
