@@ -277,9 +277,9 @@ int main() {
     }
 
     std::cout << "\nTo add new points, click left button;\n";
-    std::cout << "Tto delete points, click right button or press backspace;\n";
+    std::cout << "To delete points, click right button or press backspace;\n";
     std::cout << "Data (clicked) points, knots points (define segments) and "
-                 "control points,  respectively, are represented by the color "
+                 "control points, respectively, are represented by the color "
                  "green, orange and red.\n";
 
 #ifdef EXPLICIT_SWAP

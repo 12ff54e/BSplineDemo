@@ -35,18 +35,18 @@ float dist_pt2parabola(vec2 pt, float a, out float xp) {
     return distance(pt, vec2(xp, a * xp * xp));
 }
 
+// Distance from a point to a line segment, and length from p1 to projection point is output in length
+float dist_pt2line(vec2 pt, vec2 p1, vec2 p2, out float length) {
+    vec2 p12 = p2 - p1;
+    vec2 pp = mix(p1, p2, clamp(dot(pt - p1, p12) / dot(p12, p12), 0., 1.));
+    length = distance(p1, pp);
+    return distance(pt, pp);
+}
+
 // Distance from a point to a line segment
 float dist_pt2line(vec2 pt, vec2 p1, vec2 p2) {
-    vec2 p1t = pt - p1;
-    vec2 p2t = pt - p2;
-    vec2 p12 = p2 - p1;
-
-    vec2 pp = p1 + dot(p1t, p12) / dot(p12, p12) * p12;
-    if(dot(pp - p1, pp - p2) < 0.) {
-        return distance(pt, pp);
-    } else {
-        return min(length(p1t), length(p2t));
-    }
+    float d;
+    return dist_pt2line(pt, p1, p2, d);
 }
 
 // arc length of a parabola y = a * x ^ 2, from x1 to x2
@@ -61,13 +61,14 @@ float parabola_arc_length(float a, float x1, float x2) {
 // |   | = coef_mat * | t   |
 // | y |              | t^2 |,
 // from t0 to t1. The arc length from point at t = t_arc to projection point is output in arc_len.
-float dist_pt2quadratic(vec2 pt, mat3x2 coef_mat, float t0, float t1, float t_arc, out float arc_length) {
-    const float eps = .00001;
+float dist_pt2quadratic(vec2 pt, mat3x2 coef_mat, float t0, float t1, float t_arc, out float arc_length, out float total_arc_length) {
+    const float eps = .0005;
     vec2 p0 = coef_mat * vec3(1., t0, t0 * t0);
     vec2 p1 = coef_mat * vec3(1., t1, t1 * t1);
     if(abs(cross(vec3(coef_mat[1], 0.), vec3(coef_mat[2], 0.)).z) < eps) {
         // treat as straight line
-        return dist_pt2line(pt, p0, p1);
+        total_arc_length = distance(p0, p1);
+        return dist_pt2line(pt, p0, p1, arc_length);
     }
 
     vec2 a = normalize(coef_mat[2]);
@@ -84,11 +85,13 @@ float dist_pt2quadratic(vec2 pt, mat3x2 coef_mat, float t0, float t1, float t_ar
     float dist = dist_pt2parabola(tp.xy, a_p, xp);
     float x0_tran = (geo_tran * vec3(p0, 1.)).x;
     float x1_tran = (geo_tran * vec3(p1, 1.)).x;
+    arc_length = parabola_arc_length(a_p, (geo_tran * vec3(coef_mat * vec3(1., t_arc, t_arc * t_arc), 1.)).x, xp) * sign(x1_tran - x0_tran);
+    total_arc_length = parabola_arc_length(a_p, x0_tran, x1_tran) * sign(x1_tran - x0_tran);
     if((x0_tran - xp) * (x1_tran - xp) > 0.) {
         // projection point outside segment range, following distance results in a round edge
         dist = min(distance(pt, p0), distance(pt, p1));
+        arc_length = total_arc_length;
     }
-    arc_length = parabola_arc_length(a_p, (geo_tran * vec3(coef_mat * vec3(1., t_arc, t_arc * t_arc), 1.)).x, xp) * sign(x1_tran - x0_tran);
 
     return dist;
 }
@@ -102,8 +105,8 @@ float dist_pt2quadratic(vec2 pt, mat3x2 coef_mat, float t0, float t1, float t_ar
 // | y |              | t^2 |,
 // from t0 to t1. The arc length from starting point to projection point is output in arc_len.
 // If projection point is not lying on the segment, arg length will be -1.
-float dist_pt2quadratic(vec2 pt, mat3x2 coef_mat, float t0, float t1, out float arc_length) {
-    return dist_pt2quadratic(pt, coef_mat, t0, t1, t0, arc_length);
+float dist_pt2quadratic(vec2 pt, mat3x2 coef_mat, float t0, float t1, out float arc_length, out float total_arc_length) {
+    return dist_pt2quadratic(pt, coef_mat, t0, t1, t0, arc_length, total_arc_length);
 }
 
 // Distance from a point to a quadratic parameter curve segment, described by
@@ -113,7 +116,7 @@ float dist_pt2quadratic(vec2 pt, mat3x2 coef_mat, float t0, float t1, out float 
 // from t0 to t1
 float dist_pt2quadratic(vec2 pt, mat3x2 coef_mat, float t0, float t1) {
     float d;
-    return dist_pt2quadratic(pt, coef_mat, t0, t1, d);
+    return dist_pt2quadratic(pt, coef_mat, t0, t1, d, d);
 }
 
 // calculate uniform bspline value using De Boor'a algorithm, t \in [span[1],span[2]]
@@ -164,6 +167,7 @@ void draw_bspline2(vec2 pt, vec3 line_color, uint size, float line_width, bool s
     size -= spline_periodic ? 1u : 0u;
     int seg_size = int(size) - (spline_periodic ? 0 : 2);
 
+    float arc_length = 0.;
     for(int k = 0; k < seg_size; ++k) {
         // calculate curve parameters according to 1st spline
         float t0 = !spline_periodic && k == 0 ? 0. : float(k) + .5;
@@ -175,11 +179,13 @@ void draw_bspline2(vec2 pt, vec3 line_color, uint size, float line_width, bool s
         vec4 d1_packed = bspline2_val(t0, local_cp, local_span, 1);
         vec4 d2_packed = bspline2_val(t0, local_cp, local_span, 2);
 
-        float arc_length;
-        float dist = dist_pt2quadratic(pt, first_part ? mat3x2(v_packed.xy, d1_packed.xy, .5 * d2_packed.xy) : mat3x2(v_packed.zw, d1_packed.zw, .5 * d2_packed.zw), 0., t1 - t0, arc_length);
-        if(dashed && arc_length > 0. && int(arc_length / (.5 * dashing)) % 2 == 0) {
+        float seg_arc_length;
+        float current_arc_length;
+        float dist = dist_pt2quadratic(pt, first_part ? mat3x2(v_packed.xy, d1_packed.xy, .5 * d2_packed.xy) : mat3x2(v_packed.zw, d1_packed.zw, .5 * d2_packed.zw), 0., t1 - t0, current_arc_length, seg_arc_length);
+        if(dashed && seg_arc_length > 0. && int((arc_length + current_arc_length) / (.5 * dashing)) % 2 == 0) {
             dist = 10. * line_width; // dashing
         }
+        arc_length = arc_length + seg_arc_length;
         render_smooth(dist, line_width, line_color);
     }
 }
@@ -245,14 +251,18 @@ void main() {
         render_smooth(distance(uv, control_point[0].xy), .5 * width, foreground_color);
     } else if(control_point_size == 2u) {
         // draw a line segment
-        render_smooth(dist_pt2line(uv, control_point[0].xy, control_point[1].xy), pending_line_width, pending_line_color);
+        float len;
+        float dist = dist_pt2line(uv, control_point[0].xy, control_point[1].xy, len);
+        if(int(len / (.5 * dashing)) % 2 == 0) {
+            dist = 10. * width;
+        }
+        render_smooth(dist, pending_line_width, pending_line_color);
         render_smooth(distance(uv, control_point[0].xy), data_point_size, foreground_color3);
     } else {
         if(control_point_size == 3u) {
             render_smooth(dist_pt2line(uv, control_point[0].xy, control_point[1].xy), fixed_line_width, fixed_line_color);
         }
         // draw bspline curve
-        // draw_bspline2(uv, line_colors, uint[2](control_point_size - 1u, control_point_size), line_width, periodic, visible);
         draw_bspline2(uv, fixed_line_color, control_point_size - 1u, fixed_line_width, bool(periodic & 1), bool(visible & 1), true, false);
         draw_bspline2(uv, pending_line_color, control_point_size, pending_line_width, bool(periodic & 2), bool(visible & 2), false, true);
 
