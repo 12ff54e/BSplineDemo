@@ -9,6 +9,7 @@ uniform float dashing;
 uniform uint control_point_size;
 uniform int periodic;
 uniform int visible;
+uniform int filled;
 layout(std140) uniform spline_data {
     vec4 control_point[MAX_ARRAY_SIZE];
 };
@@ -16,7 +17,7 @@ layout(std140) uniform spline_data {
 in vec3 color;
 out vec4 frag_color;
 
-// x - f(x) / f'(x), used in calculating distance from a parabola
+// x - f(x) / f'(x) with f(x)=a*x^2, used in calculating distance from a parabola
 float ns(float x, vec2 pt0, float a) {
     float a2x2 = 2. * a * a * x * x;
     return x - (pt0.x + 2. * a2x2 * x) / (1. - 2. * a * pt0.y + 3. * a2x2);
@@ -119,6 +120,46 @@ float dist_pt2quadratic(vec2 pt, mat3x2 coef_mat, float t0, float t1) {
     return dist_pt2quadratic(pt, coef_mat, t0, t1, d, d);
 }
 
+int horizontal_crossing_count(vec2 pt, mat3x2 coef_mat, float t0, float t1) {
+    float c = coef_mat[0][1];
+    float b = coef_mat[1][1];
+    float a = coef_mat[2][1];
+
+    const float eps = .0005;
+
+    // treat as line in y direction
+
+    if(abs(a) < eps) {
+        if(abs(b) < eps) {
+            return 0;
+        }
+
+        float t = (pt.y - c) / b;
+        if(t < t0 || t > t1) {
+            return 0;
+        }
+
+        return (coef_mat * vec3(1., t, t * t)).x < pt.x ? 1 : 0;
+    }
+
+    // general case
+
+    float t;
+    float det = b * b - 4. * a * (c - pt.y);
+    if(det <= 0.) {
+        return 0;
+    }
+
+    int root_num = 0;
+    for(int i = 0; i < 2; ++i) {
+        t = (-b + float(i * 2 - 1) * sqrt(det)) / (2. * a);
+        if(t >= t0 && t <= t1 && (coef_mat * vec3(1., t, t * t)).x < pt.x) {
+            ++root_num;
+        }
+    }
+    return root_num;
+}
+
 // calculate uniform bspline value using De Boor'a algorithm, t \in [span[1],span[2]]
 vec4 bspline2_val(float t, vec4 cp[3], float span[4], int der) {
     const int order = 2;
@@ -158,8 +199,9 @@ void render_smooth(float dist, float elem_size, vec3 color) {
  * @param spline_visible a bit-mask specifying visibility of each spline
  * @param first_part control point being xy or zw component of spline_data
  * @param dashed dashing or not
+ * @param filled filling interior or not
  */
-void draw_bspline2(vec2 pt, vec3 line_color, uint size, float line_width, bool spline_periodic, bool spline_visible, bool first_part, bool dashed) {
+void draw_bspline2(vec2 pt, vec3 line_color, uint size, float line_width, bool spline_periodic, bool spline_visible, bool first_part, bool dashed, bool filled, vec3 fill_color) {
     if(!spline_visible) {
         return;
     }
@@ -168,6 +210,39 @@ void draw_bspline2(vec2 pt, vec3 line_color, uint size, float line_width, bool s
     int seg_size = int(size) - (spline_periodic ? 0 : 2);
 
     float arc_length = 0.;
+    if(filled) {
+        int crossing_count = 0;
+        vec2 p0, p1;
+        for(int k = 0; k < seg_size; ++k) {
+            // calculate curve parameters according to 1st spline
+            float t0 = !spline_periodic && k == 0 ? 0. : float(k) + .5;
+            float t1 = !spline_periodic && k == seg_size - 1 ? float(seg_size + 1) : float(k) + 1.5;
+            vec4[] local_cp = vec4[3](control_point[k], control_point[(k + 1) % (int(size))], control_point[(k + 2) % (int(size))]);
+            float[] local_span = float[4](spline_periodic ? t0 - 1. : k <= 1 ? 0. : t0 - 1., t0, t1, spline_periodic ? t1 + 1. : k >= seg_size - 2 ? float(seg_size + 1) : t1 + 1.);
+
+            vec4 v_packed = bspline2_val(t0, local_cp, local_span, 0);
+            vec4 d1_packed = bspline2_val(t0, local_cp, local_span, 1);
+            vec4 d2_packed = bspline2_val(t0, local_cp, local_span, 2);
+            mat3x2 coef_mat = first_part ? mat3x2(v_packed.xy, d1_packed.xy, .5 * d2_packed.xy) : mat3x2(v_packed.zw, d1_packed.zw, .5 * d2_packed.zw);
+            crossing_count += horizontal_crossing_count(pt, coef_mat, 0., t1 - t0);
+
+            if(k == 0) {
+                p0 = coef_mat * vec3(1., 0., 0.);
+            }
+            if(k == seg_size - 1) {
+                float dt = t1 - t0;
+                p1 = coef_mat * vec3(1., dt, dt * dt);
+            }
+        }
+
+        // closing spline with a line segment connecting two ends
+        crossing_count += horizontal_crossing_count(pt, mat3x2(p0.x, p0.y, p1.x - p0.x, p1.y - p0.y, 0., 0.), 0., 1.);
+        if(crossing_count % 2 == 1) {
+        // interior
+            render_smooth(0., line_width, fill_color);
+        }
+    }
+
     for(int k = 0; k < seg_size; ++k) {
         // calculate curve parameters according to 1st spline
         float t0 = !spline_periodic && k == 0 ? 0. : float(k) + .5;
@@ -181,7 +256,8 @@ void draw_bspline2(vec2 pt, vec3 line_color, uint size, float line_width, bool s
 
         float seg_arc_length;
         float current_arc_length;
-        float dist = dist_pt2quadratic(pt, first_part ? mat3x2(v_packed.xy, d1_packed.xy, .5 * d2_packed.xy) : mat3x2(v_packed.zw, d1_packed.zw, .5 * d2_packed.zw), 0., t1 - t0, current_arc_length, seg_arc_length);
+        mat3x2 coef_mat = first_part ? mat3x2(v_packed.xy, d1_packed.xy, .5 * d2_packed.xy) : mat3x2(v_packed.zw, d1_packed.zw, .5 * d2_packed.zw);
+        float dist = dist_pt2quadratic(pt, coef_mat, 0., t1 - t0, current_arc_length, seg_arc_length);
         if(dashed && seg_arc_length > 0. && int((arc_length + current_arc_length) / (.5 * dashing)) % 2 == 0) {
             dist = 10. * line_width; // dashing
         }
@@ -189,6 +265,10 @@ void draw_bspline2(vec2 pt, vec3 line_color, uint size, float line_width, bool s
         render_smooth(dist, line_width, line_color);
     }
 }
+
+void draw_bspline2(vec2 pt, vec3 line_color, uint size, float line_width, bool spline_periodic, bool spline_visible, bool first_part, bool dashed) {
+    draw_bspline2(pt, line_color, size, line_width, spline_periodic, spline_visible, first_part, dashed, false, vec3(0.));
+} 
 
 void draw_data_points(vec2 pt, vec3 color, float point_size) {
     bool p = bool(periodic & 1);
@@ -263,7 +343,7 @@ void main() {
             render_smooth(dist_pt2line(uv, control_point[0].xy, control_point[1].xy), fixed_line_width, fixed_line_color);
         }
         // draw bspline curve
-        draw_bspline2(uv, fixed_line_color, control_point_size - 1u, fixed_line_width, bool(periodic & 1), bool(visible & 1), true, false);
+        draw_bspline2(uv, fixed_line_color, control_point_size - 1u, fixed_line_width, bool(periodic & 1), bool(visible & 1), true, false, bool(filled & 1), foreground_color4);
         draw_bspline2(uv, pending_line_color, control_point_size, pending_line_width, bool(periodic & 2), bool(visible & 2), false, true);
 
         if(control_point_size == 3u) {
@@ -271,44 +351,5 @@ void main() {
             render_smooth(distance(uv, control_point[1].xy), data_point_size, foreground_color3);
         }
         draw_data_points(uv, foreground_color3, data_point_size);
-        return;
-
-        // and data points and knot points
-        int seg_size = int(control_point_size) - 2;
-        for(int k = 0; k < seg_size; ++k) {
-            float t0 = k == 0 ? 0. : float(k) + .5;
-            float s1_t1 = k == seg_size - 2 ? float(seg_size) : float(k) + 1.5;
-            float s2_t1 = k == seg_size - 1 ? float(seg_size + 1) : float(k) + 1.5;
-            vec4[] local_cp = vec4[3](control_point[k], control_point[k + 1], control_point[k + 2]);
-            float[] s1_local_span = float[4](k <= 1 ? 0. : t0 - 1., t0, s1_t1, k >= seg_size - 3 ? float(seg_size) : s1_t1 + 1.);
-            float[] s2_local_span = float[4](k <= 1 ? 0. : t0 - 1., t0, s2_t1, k >= seg_size - 2 ? float(seg_size + 1) : s2_t1 + 1.);
-
-            vec2 knot_point = bspline2_val(t0, local_cp, s1_local_span, 0).xy;
-            vec2 data_point;
-
-            if(k < seg_size - 1) {
-                render_smooth(distance(uv, knot_point), 1.5 * width, foreground_color2);
-            }
-            if(k == seg_size - 1) {
-                data_point = bspline2_val(s2_t1, local_cp, s2_local_span, 0).zw;
-                // render_smooth(distance(uv, data_point), 1.5 * width, foreground_color2);
-                render_smooth(distance(uv, data_point), 2. * width, foreground_color3);
-                data_point = bspline2_val(s2_t1 - 1., local_cp, s2_local_span, 0).zw;
-            }
-
-            if(k == 0) {
-                data_point = knot_point;
-                render_smooth(distance(uv, data_point), 2. * width, foreground_color3);
-                data_point = bspline2_val(t0 + 1., local_cp, s2_local_span, 0).zw;
-            } else if(k < seg_size - 1) {
-                data_point = bspline2_val(.5 * (t0 + s2_t1), local_cp, s2_local_span, 0).zw;
-            }
-            render_smooth(distance(uv, data_point), 2. * width, foreground_color3);
-        }
-
-        // and control points
-        for(uint i = 0u; i < control_point_size; ++i) {
-            render_smooth(distance(uv, control_point[i].zw), width, foreground_color4);
-        }
     }
 }

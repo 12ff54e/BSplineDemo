@@ -26,9 +26,12 @@ static GLint control_point_size_loc;
 static GLint periodic_loc;
 // location of uniform var visible
 static GLint visible_loc;
+// location of uniform var filled
+static GLint filled_loc;
 
 static pt_type current_pt;
 static GLint spline_closed = 0;
+static GLint spline_filled = 0;
 
 #define exec_and_check(func, ...)                             \
     do {                                                      \
@@ -105,6 +108,7 @@ static void draw() {
     glUniform1ui(control_point_size_loc, get_data().size());
     glUniform1i(periodic_loc, spline_closed);
     glUniform1i(visible_loc, spline_closed & 1 ? 1 : 3);
+    glUniform1i(filled_loc, spline_filled);
     // update control points
     glBindBuffer(GL_UNIFORM_BUFFER, ubo);
     glBufferSubData(GL_UNIFORM_BUFFER, 0,
@@ -186,6 +190,7 @@ int main() {
     glUniform1ui(control_point_size_loc, control_point_size);
     periodic_loc = glGetUniformLocation(program, "periodic");
     visible_loc = glGetUniformLocation(program, "visible");
+    filled_loc = glGetUniformLocation(program, "filled");
 
     // bind ubo to shader program
     GLuint blockIndex = glGetUniformBlockIndex(program, "spline_data");
@@ -229,6 +234,10 @@ int main() {
         if (!get_data().empty() &&
             key_event->code == std::string{"Backspace"}) {
             get_data().pop_back();
+            return EM_TRUE;
+        }
+        if (key_event->code == std::string{"KeyF"}) {
+            spline_filled = 1 - spline_filled;
             return EM_TRUE;
         }
         return EM_FALSE;
@@ -276,8 +285,9 @@ int main() {
             reinterpret_cast<void*>(sizeof(GLfloat) * pos_size));
     }
 
-    std::cout << "\nTo add new points, click left button;\n";
-    std::cout << "To delete points, click right button or press backspace;\n";
+    std::cout << "\nClick left button to add new points;\n";
+    std::cout << "Click right button or press backspace to delete points;\n";
+    std::cout << "Press F to toggle spline filling;\n";
     std::cout << "Data (clicked) points, knots points (define segments) and "
                  "control points, respectively, are represented by the color "
                  "green, orange and red.\n";
